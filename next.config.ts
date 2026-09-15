@@ -1,7 +1,10 @@
 import type { NextConfig } from "next";
 
+const isStandalone = process.env.BUILD_STANDALONE === "true";
+
 const nextConfig: NextConfig = {
-  output: "standalone",
+  // Only use standalone when explicitly set (e.g. Docker/Cloud Run), Vercel manages its own serverless bundling
+  ...(isStandalone ? { output: "standalone" } : {}),
   devIndicators: false,
   allowedDevOrigins: [
     "*.run.app",

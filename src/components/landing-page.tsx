@@ -1,43 +1,15 @@
 "use client";
 
-import { useState } from "react";
 import Image from "next/image";
-import { Button } from "@/components/ui/button";
-import { useAuth } from "@/context/auth-context";
-import { GoogleIcon, DiscordIcon } from "@/components/auth-form";
+import Link from "next/link";
+import { AuthForm } from "@/components/auth-form";
 
 export function LandingPage() {
-  const { loginWithGoogle, loginWithDiscord } = useAuth();
-  const [loadingGoogle, setLoadingGoogle] = useState(false);
-  const [loadingDiscord, setLoadingDiscord] = useState(false);
-
-  async function handleGoogle() {
-    setLoadingGoogle(true);
-    try {
-      await loginWithGoogle();
-    } finally {
-      setLoadingGoogle(false);
-    }
-  }
-
-  async function handleDiscord() {
-    setLoadingDiscord(true);
-    try {
-      await loginWithDiscord();
-    } finally {
-      setLoadingDiscord(false);
-    }
-  }
-
   return (
     <div className="page-in flex min-h-svh flex-col bg-[#09090e] text-white selection:bg-white/20">
+      {/* Header */}
       <header className="flex h-14 items-center justify-between border-b border-white/5 px-6">
-        <button
-          type="button"
-          className="flex cursor-pointer items-center gap-2.5 text-sm font-medium text-white/90 hover:text-white transition-colors"
-          aria-label="Auxy Home"
-          onClick={() => window.location.reload()}
-        >
+        <div className="flex items-center gap-2.5 text-sm font-medium text-white/90">
           <div className="relative size-6 overflow-hidden rounded-md">
             <Image
               src="/logo.png"
@@ -50,58 +22,58 @@ export function LandingPage() {
             />
           </div>
           <span className="font-semibold tracking-wide">Auxy</span>
-        </button>
+        </div>
         <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            onClick={handleGoogle}
-            disabled={loadingGoogle || loadingDiscord}
-            className="bg-white hover:bg-neutral-200 text-neutral-950 font-medium text-xs px-3.5 h-8 shadow-sm flex items-center gap-1.5"
+          <Link
+            href="/login"
+            className="text-xs font-medium text-neutral-300 hover:text-white px-3 py-1.5 rounded-lg hover:bg-white/5 transition-colors"
           >
-            <GoogleIcon className="size-3.5" />
-            <span>{loadingGoogle ? "Connecting..." : "Sign in with Google"}</span>
-          </Button>
+            Sign In
+          </Link>
+          <Link
+            href="/register"
+            className="text-xs font-semibold text-neutral-950 bg-white hover:bg-neutral-200 px-3.5 py-1.5 rounded-lg transition-colors shadow-xs"
+          >
+            Create Account
+          </Link>
         </div>
       </header>
-      <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col items-center justify-center px-6 pb-24 text-center">
-        <div className="relative mb-6 size-24 overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-2 shadow-2xl shadow-black/60 backdrop-blur-xl">
-          <Image
-            src="/logo.png"
-            alt="Auxy"
-            fill
-            sizes="96px"
-            className="object-contain p-2"
-            priority
-            referrerPolicy="no-referrer"
-          />
+
+      {/* Main Hero & Direct Normal Auth Section */}
+      <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col lg:flex-row items-center justify-center gap-12 px-6 py-12">
+        <div className="flex flex-1 flex-col items-center lg:items-start text-center lg:text-left max-w-lg">
+          <div className="relative mb-6 size-16 overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-2 shadow-xl shadow-black/40 backdrop-blur-xl">
+            <Image
+              src="/logo.png"
+              alt="Auxy"
+              fill
+              sizes="64px"
+              className="object-contain p-1"
+              priority
+              referrerPolicy="no-referrer"
+            />
+          </div>
+          <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-white leading-tight">
+            Curate your room, customize atmosphere, and play.
+          </h1>
+          <p className="mt-4 text-sm sm:text-base leading-relaxed text-neutral-400">
+            Sign in to access your customized room backgrounds, saved tracks,
+            YouTube playlist imports, and a floating draggable player.
+          </p>
+          <div className="mt-6 flex items-center gap-6 text-xs text-neutral-500">
+            <div className="flex items-center gap-2">
+              <span className="size-1.5 rounded-full bg-emerald-400" />
+              <span>Real-time Cloud Sync</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="size-1.5 rounded-full bg-blue-400" />
+              <span>Free Forever</span>
+            </div>
+          </div>
         </div>
-        <h1 className="max-w-xl text-4xl font-semibold tracking-tight sm:text-5xl text-white">
-          Sign in, curate your room, and play.
-        </h1>
-        <p className="mt-5 max-w-lg text-base leading-7 text-neutral-400">
-          Real-time Firebase Firestore synchronization, shareable public profiles,
-          YouTube playlist imports, and a floating draggable player.
-        </p>
-        <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-          <Button
-            size="lg"
-            onClick={handleGoogle}
-            disabled={loadingGoogle || loadingDiscord}
-            className="h-12 px-6 bg-white hover:bg-neutral-200 text-neutral-950 font-medium text-sm shadow-xl flex items-center gap-2"
-          >
-            <GoogleIcon className="size-5" />
-            <span>{loadingGoogle ? "Connecting..." : "Continue with Google"}</span>
-          </Button>
-          <Button
-            size="lg"
-            variant="outline"
-            onClick={handleDiscord}
-            disabled={loadingGoogle || loadingDiscord}
-            className="h-12 px-6 border-white/15 bg-white/5 hover:bg-white/10 text-white font-medium text-sm flex items-center gap-2"
-          >
-            <DiscordIcon className="size-5 text-[#5865F2]" />
-            <span>{loadingDiscord ? "Connecting..." : "Instant Demo Room"}</span>
-          </Button>
+
+        <div className="w-full max-w-sm flex justify-center">
+          <AuthForm compact mode="login" />
         </div>
       </main>
     </div>

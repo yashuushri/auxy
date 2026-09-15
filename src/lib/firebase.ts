@@ -4,10 +4,14 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
   signOut as firebaseSignOut,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updateProfile,
   User as FirebaseUser,
 } from "firebase/auth";
 import {
   getFirestore,
+  initializeFirestore,
   doc,
   getDoc,
   getDocFromServer,
@@ -22,7 +26,22 @@ import type { UserAccount, Playlist, Track, PublicProfile } from "@/lib/types";
 
 // 1. Initialize Firebase App and Services
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId); /* CRITICAL: The app will break without this line */
+
+// Use long-polling transport to prevent proxy/iframe connection buffering and 10s timeout warnings
+export const db = (() => {
+  try {
+    return initializeFirestore(
+      app,
+      {
+        experimentalForceLongPolling: true,
+      },
+      firebaseConfig.firestoreDatabaseId
+    ); /* CRITICAL: The app will break without this line */
+  } catch {
+    return getFirestore(app, firebaseConfig.firestoreDatabaseId); /* CRITICAL: The app will break without this line */
+  }
+})();
+
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
@@ -94,6 +113,58 @@ export function handleFirestoreError(
 }
 
 // 4. Firebase Authentication Helpers
+export function getFriendlyAuthErrorMessage(error: unknown): string {
+  const msg = error instanceof Error ? error.message : String(error);
+  if (msg.includes("auth/invalid-credential") || msg.includes("auth/wrong-password") || msg.includes("auth/user-not-found")) {
+    return "Incorrect email or password. Please try again.";
+  }
+  if (msg.includes("auth/email-already-in-use")) {
+    return "An account with this email already exists. Please sign in.";
+  }
+  if (msg.includes("auth/invalid-email")) {
+    return "Please enter a valid email address.";
+  }
+  if (msg.includes("auth/weak-password")) {
+    return "Password must be at least 6 characters.";
+  }
+  if (msg.includes("auth/network-request-failed")) {
+    return "Network error. Please check your connection.";
+  }
+  return msg.replace(/^Firebase:\s*/, "") || "Authentication failed. Please try again.";
+}
+
+export async function signInWithEmail(
+  email: string,
+  pass: string
+): Promise<{ user: FirebaseUser | null; error: Error | null }> {
+  try {
+    const res = await signInWithEmailAndPassword(auth, email.trim(), pass);
+    return { user: res.user, error: null };
+  } catch (err) {
+    return { user: null, error: new Error(getFriendlyAuthErrorMessage(err)) };
+  }
+}
+
+export async function signUpWithEmail(
+  email: string,
+  pass: string,
+  displayName?: string
+): Promise<{ user: FirebaseUser | null; error: Error | null }> {
+  try {
+    const res = await createUserWithEmailAndPassword(auth, email.trim(), pass);
+    if (displayName && res.user) {
+      try {
+        await updateProfile(res.user, { displayName });
+      } catch {
+        // best effort
+      }
+    }
+    return { user: res.user, error: null };
+  } catch (err) {
+    return { user: null, error: new Error(getFriendlyAuthErrorMessage(err)) };
+  }
+}
+
 export async function signInWithGoogle(): Promise<{ user: FirebaseUser | null; error: Error | null }> {
   try {
     const res = await signInWithPopup(auth, googleProvider);

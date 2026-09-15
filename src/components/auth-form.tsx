@@ -3,118 +3,238 @@
 import Link from "next/link";
 import { useState } from "react";
 import Image from "next/image";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff, Loader2, Lock, Mail, User, Sparkles } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/context/auth-context";
 
-export function GoogleIcon({ className = "size-5" }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24">
-      <path
-        fill="#4285F4"
-        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-      />
-      <path
-        fill="#34A853"
-        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-      />
-      <path
-        fill="#FBBC05"
-        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-      />
-      <path
-        fill="#EA4335"
-        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-      />
-    </svg>
-  );
-}
+export function AuthForm({
+  mode: initialMode = "login",
+  compact = false,
+}: {
+  mode?: "login" | "register";
+  compact?: boolean;
+} = {}) {
+  const { loginWithEmail, signUpWithEmail, loginAsGuest } = useAuth();
+  const router = useRouter();
+  const [tab, setTab] = useState<"login" | "register">(initialMode);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-export function DiscordIcon({ className = "size-5" }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.929 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.893.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z" />
-    </svg>
-  );
-}
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setErrorMsg(null);
 
-export function AuthForm({ mode = "login" }: { mode?: "login" | "register" } = {}) {
-  const { loginWithGoogle, loginWithDiscord } = useAuth();
-  const [loadingGoogle, setLoadingGoogle] = useState(false);
-  const [loadingDiscord, setLoadingDiscord] = useState(false);
+    const cleanEmail = email.trim();
+    if (!cleanEmail) {
+      setErrorMsg("Please enter your email address.");
+      return;
+    }
+    if (!password || password.length < 6) {
+      setErrorMsg("Password must be at least 6 characters.");
+      return;
+    }
 
-  async function handleGoogle() {
-    setLoadingGoogle(true);
+    setLoading(true);
     try {
-      await loginWithGoogle();
+      if (tab === "register") {
+        const cleanName = name.trim() || cleanEmail.split("@")[0];
+        const res = await signUpWithEmail(cleanEmail, password, cleanName);
+        if (res.success) {
+          router.replace("/");
+        } else if (res.error) {
+          setErrorMsg(res.error);
+        }
+      } else {
+        const res = await loginWithEmail(cleanEmail, password);
+        if (res.success) {
+          router.replace("/");
+        } else if (res.error) {
+          setErrorMsg(res.error);
+        }
+      }
     } finally {
-      setLoadingGoogle(false);
+      setLoading(false);
     }
   }
 
-  async function handleDiscord() {
-    setLoadingDiscord(true);
-    try {
-      await loginWithDiscord();
-    } finally {
-      setLoadingDiscord(false);
-    }
+  function handleGuest() {
+    loginAsGuest("Guest");
+    router.replace("/");
   }
 
-  return (
-    <div className="page-in relative flex min-h-svh flex-col items-center justify-center bg-[#09090e] px-4 py-10 text-white selection:bg-white/20">
-      <Card className="w-full max-w-sm border-white/10 bg-white/[0.03] text-white shadow-2xl backdrop-blur-xl">
-        <CardHeader className="text-center pb-2">
-          <div className="relative mx-auto mb-3 size-14 overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-1 shadow-lg backdrop-blur-md">
-            <Image
-              src="/logo.png"
-              alt="Auxy"
-              fill
-              sizes="56px"
-              className="object-contain p-1"
-              priority
-              referrerPolicy="no-referrer"
-            />
+  const content = (
+    <Card className="w-full max-w-sm border-white/10 bg-[#101017]/90 text-white shadow-2xl backdrop-blur-2xl rounded-2xl overflow-hidden">
+      {/* Top Tab Switcher */}
+      <div className="flex border-b border-white/10 bg-white/[0.02] p-1.5 gap-1.5">
+        <button
+          type="button"
+          onClick={() => {
+            setTab("login");
+            setErrorMsg(null);
+          }}
+          className={`flex-1 py-2 text-xs font-semibold rounded-xl transition-all cursor-pointer ${
+            tab === "login"
+              ? "bg-white text-neutral-950 shadow-sm"
+              : "text-neutral-400 hover:text-white"
+          }`}
+        >
+          Sign In
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setTab("register");
+            setErrorMsg(null);
+          }}
+          className={`flex-1 py-2 text-xs font-semibold rounded-xl transition-all cursor-pointer ${
+            tab === "register"
+              ? "bg-white text-neutral-950 shadow-sm"
+              : "text-neutral-400 hover:text-white"
+          }`}
+        >
+          Create Account
+        </button>
+      </div>
+
+      <CardHeader className="text-center pb-3 pt-5">
+        <div className="relative mx-auto mb-2 size-12 overflow-hidden rounded-xl border border-white/10 bg-white/5 p-1 shadow-md">
+          <Image
+            src="/logo.png"
+            alt="Auxy"
+            fill
+            sizes="48px"
+            className="object-contain p-1"
+            priority
+            referrerPolicy="no-referrer"
+          />
+        </div>
+        <CardTitle className="text-xl font-bold tracking-tight">
+          {tab === "register" ? "Create your Account" : "Sign in to Auxy"}
+        </CardTitle>
+        <CardDescription className="text-neutral-400 text-xs mt-1">
+          {tab === "register"
+            ? "Enter your details to save your rooms and playlists."
+            : "Enter your email and password to access your room."}
+        </CardDescription>
+      </CardHeader>
+
+      <CardContent className="flex flex-col gap-4 pt-1">
+        {errorMsg && (
+          <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3.5 py-2.5 text-xs text-red-200">
+            {errorMsg}
           </div>
-          <CardTitle className="text-2xl font-semibold tracking-tight">
-            {mode === "register" ? "Join Auxy" : "Welcome to Auxy"}
-          </CardTitle>
-          <CardDescription className="text-neutral-400 text-xs mt-1">
-            Sign in to sync your rooms and playlists across devices with Firebase.
-          </CardDescription>
-        </CardHeader>
+        )}
 
-        <CardContent className="flex flex-col gap-3 pt-4">
+        <form onSubmit={handleSubmit} className="flex flex-col gap-3.5">
+          {tab === "register" && (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-neutral-300">
+                Name / Username
+              </label>
+              <div className="relative">
+                <User className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 size-4 text-neutral-500" />
+                <input
+                  type="text"
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Your name or handle"
+                  className="w-full h-10 pl-9 pr-3 rounded-xl border border-white/10 bg-white/[0.04] text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/40 focus:ring-1 focus:ring-white/40"
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-neutral-300">
+              Email address
+            </label>
+            <div className="relative">
+              <Mail className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 size-4 text-neutral-500" />
+              <input
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                className="w-full h-10 pl-9 pr-3 rounded-xl border border-white/10 bg-white/[0.04] text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/40 focus:ring-1 focus:ring-white/40"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-neutral-300">
+                Password
+              </label>
+              {tab === "register" && (
+                <span className="text-[11px] text-neutral-500">Min. 6 characters</span>
+              )}
+            </div>
+            <div className="relative">
+              <Lock className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 size-4 text-neutral-500" />
+              <input
+                type={showPassword ? "text" : "password"}
+                required
+                minLength={6}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                className="w-full h-10 pl-9 pr-10 rounded-xl border border-white/10 bg-white/[0.04] text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/40 focus:ring-1 focus:ring-white/40"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-white transition-colors cursor-pointer"
+                tabIndex={-1}
+              >
+                {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+              </button>
+            </div>
+          </div>
+
           <Button
-            type="button"
-            onClick={handleGoogle}
-            disabled={loadingGoogle || loadingDiscord}
-            className="w-full h-11 bg-white hover:bg-neutral-200 text-neutral-900 font-medium text-sm transition-all duration-200 shadow-md flex items-center justify-center gap-2.5"
+            type="submit"
+            disabled={loading}
+            className="w-full h-11 mt-1 bg-white hover:bg-neutral-200 text-neutral-950 font-bold text-sm rounded-xl transition-all duration-200 shadow-md flex items-center justify-center gap-2 cursor-pointer"
           >
-            <GoogleIcon className="size-4" />
-            <span>{loadingGoogle ? "Connecting..." : "Continue with Google"}</span>
+            {loading ? (
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                <span>{tab === "register" ? "Creating Account..." : "Signing In..."}</span>
+              </>
+            ) : (
+              <span>{tab === "register" ? "Create Account" : "Sign In"}</span>
+            )}
           </Button>
+        </form>
 
-          <Button
-            type="button"
-            onClick={handleDiscord}
-            disabled={loadingGoogle || loadingDiscord}
-            className="w-full h-11 bg-[#5865F2] hover:bg-[#4752C4] text-white font-medium text-sm transition-all duration-200 shadow-md shadow-[#5865F2]/20 flex items-center justify-center gap-2.5"
-          >
-            <DiscordIcon className="size-4" />
-            <span>{loadingDiscord ? "Connecting..." : "Instant Demo / Guest Room"}</span>
-          </Button>
+        <div className="relative my-1">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t border-white/10" />
+          </div>
+          <div className="relative flex justify-center text-xs">
+            <span className="bg-[#101017] px-2 text-neutral-500">or</span>
+          </div>
+        </div>
 
-          <p className="text-center text-[11px] text-neutral-500 mt-2">
-            Secure cloud synchronization powered by Google Firebase Firestore.
-          </p>
+        {/* Instant Guest / Explore Button */}
+        <button
+          type="button"
+          onClick={handleGuest}
+          className="w-full h-9 rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.06] text-neutral-300 hover:text-white text-xs font-medium transition-colors flex items-center justify-center gap-2 cursor-pointer"
+        >
+          <Sparkles className="size-3.5 text-amber-400" />
+          <span>Continue as Guest</span>
+        </button>
 
+        {!compact && (
           <div className="pt-2 text-center">
             <Link
               href="/"
@@ -124,8 +244,18 @@ export function AuthForm({ mode = "login" }: { mode?: "login" | "register" } = {
               <span>Back to home</span>
             </Link>
           </div>
-        </CardContent>
-      </Card>
+        )}
+      </CardContent>
+    </Card>
+  );
+
+  if (compact) {
+    return content;
+  }
+
+  return (
+    <div className="page-in relative flex min-h-svh flex-col items-center justify-center bg-[#09090e] px-4 py-10 text-white selection:bg-white/20">
+      {content}
     </div>
   );
 }

@@ -23,6 +23,8 @@ import {
 } from "@/lib/storage";
 import {
   auth,
+  signInWithEmail,
+  signUpWithEmail,
   signInWithGoogle,
   signOutUser,
   syncUserProfileToFirestore,
@@ -35,13 +37,15 @@ type UserPatch = Partial<UserAccount> | ((current: UserAccount) => UserAccount);
 type AuthContextValue = {
   ready: boolean;
   user: UserAccount | null;
-  loginWithGoogle: () => Promise<void>;
-  loginWithDiscord: () => Promise<void>;
+  loginWithEmail: (email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
+  signUpWithEmail: (email: string, pass: string, displayName?: string) => Promise<{ success: boolean; error?: string }>;
+  loginAsGuest: (name?: string) => void;
   logout: () => void;
   updateUser: (patch: UserPatch) => void;
-  // Fallbacks for legacy callers
-  login?: (username?: string, password?: string) => Promise<void>;
-  register?: (username?: string, password?: string, confirm?: string) => Promise<void>;
+  login: (email?: string, pass?: string) => Promise<void>;
+  register: (email?: string, pass?: string, name?: string) => Promise<void>;
+  loginWithGoogle?: () => Promise<void>;
+  loginWithDiscord?: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -165,45 +169,60 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const loginWithGoogleHandler = useCallback(async () => {
+  const loginWithEmailHandler = useCallback(async (email: string, pass: string) => {
     try {
-      const { user: fbUser, error } = await signInWithGoogle();
+      const { user: fbUser, error } = await signInWithEmail(email, pass);
       if (error) {
-        toast.error(error.message || "Failed to sign in with Google");
-        return;
+        toast.error(error.message || "Failed to sign in");
+        return { success: false, error: error.message };
       }
       if (fbUser) {
-        toast.success(`Signed in as ${fbUser.displayName || fbUser.email}`);
+        toast.success(`Welcome back, ${fbUser.displayName || fbUser.email?.split("@")[0] || "User"}!`);
+        return { success: true };
       }
-    } catch {
-      toast.error("Google sign in was cancelled or failed");
+      return { success: false, error: "Authentication failed" };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to sign in";
+      toast.error(msg);
+      return { success: false, error: msg };
     }
   }, []);
 
-  const loginWithDiscordHandler = useCallback(async () => {
-    // For Discord / Fast login, try Google sign-in with Firebase, or offer instant demo
-    try {
-      const { user: fbUser, error } = await signInWithGoogle();
-      if (!error && fbUser) {
-        toast.success(`Welcome ${fbUser.displayName || "back"}!`);
-        return;
+  const signUpWithEmailHandler = useCallback(
+    async (email: string, pass: string, displayName?: string) => {
+      try {
+        const { user: fbUser, error } = await signUpWithEmail(email, pass, displayName);
+        if (error) {
+          toast.error(error.message || "Failed to create account");
+          return { success: false, error: error.message };
+        }
+        if (fbUser) {
+          toast.success(`Account created! Welcome, ${displayName || fbUser.email?.split("@")[0]}!`);
+          return { success: true };
+        }
+        return { success: false, error: "Registration failed" };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Failed to create account";
+        toast.error(msg);
+        return { success: false, error: msg };
       }
-    } catch {
-      // Continue to demo account
-    }
+    },
+    []
+  );
 
-    // Instant local demo session fallback if popup is closed or user wants instant guest entry
-    toast.info("Starting instant demo session.");
-    const demoAccount = createDiscordAccount({
-      id: "demo-user-123",
-      discordId: "847294829472",
-      username: "auxydemo",
-      displayName: "Auxy Demo",
-      avatar: "https://api.dicebear.com/7.x/bottts/svg?seed=auxydemo",
+  const loginAsGuestHandler = useCallback((name?: string) => {
+    const handle = (name?.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "") || "guest") + "_" + Math.floor(Math.random() * 900 + 100);
+    const guestAccount = createDiscordAccount({
+      id: `guest_${Date.now()}`,
+      discordId: `guest_${Date.now()}`,
+      username: handle,
+      displayName: name?.trim() || "Guest Listener",
+      avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${handle}`,
     });
-    saveUser(demoAccount);
-    setSessionUsername(demoAccount.username);
-    setUser(demoAccount);
+    saveUser(guestAccount);
+    setSessionUsername(guestAccount.username);
+    setUser(guestAccount);
+    toast.success(`Entered as ${guestAccount.displayName}`);
   }, []);
 
   const logoutHandler = useCallback(async () => {
@@ -235,18 +254,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [queueCloudSync]
   );
 
+  const loginLegacy = useCallback(
+    async (email?: string, pass?: string) => {
+      if (!email || !pass) return;
+      await loginWithEmailHandler(email, pass);
+    },
+    [loginWithEmailHandler]
+  );
+
+  const registerLegacy = useCallback(
+    async (email?: string, pass?: string, name?: string) => {
+      if (!email || !pass) return;
+      await signUpWithEmailHandler(email, pass, name);
+    },
+    [signUpWithEmailHandler]
+  );
+
   const value = useMemo(
     () => ({
       ready,
       user,
-      loginWithGoogle: loginWithGoogleHandler,
-      loginWithDiscord: loginWithDiscordHandler,
+      loginWithEmail: loginWithEmailHandler,
+      signUpWithEmail: signUpWithEmailHandler,
+      loginAsGuest: loginAsGuestHandler,
       logout: logoutHandler,
       updateUser,
-      login: loginWithGoogleHandler,
-      register: loginWithGoogleHandler,
+      login: loginLegacy,
+      register: registerLegacy,
+      loginWithGoogle: async () => {
+        const { user: fb } = await signInWithGoogle();
+        if (fb) toast.success("Signed in");
+      },
+      loginWithDiscord: async () => {
+        loginAsGuestHandler("Guest Listener");
+      },
     }),
-    [ready, user, loginWithGoogleHandler, loginWithDiscordHandler, logoutHandler, updateUser]
+    [
+      ready,
+      user,
+      loginWithEmailHandler,
+      signUpWithEmailHandler,
+      loginAsGuestHandler,
+      logoutHandler,
+      updateUser,
+      loginLegacy,
+      registerLegacy,
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
