@@ -1,23 +1,7 @@
 import type { Track } from "@/lib/types";
+import { createTrackFromYouTube, extractYouTubeId } from "@/lib/youtube";
 
-type ItunesSong = {
-  trackId: number;
-  trackName: string;
-  artistName: string;
-  collectionName?: string;
-  artworkUrl100?: string;
-  trackTimeMillis?: number;
-  previewUrl?: string;
-};
-
-export function extractYouTubeId(input: string) {
-  const value = input.trim();
-  if (/^[A-Za-z0-9_-]{11}$/.test(value)) return value;
-  const match = value.match(
-    /(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/))([A-Za-z0-9_-]{11})/
-  );
-  return match?.[1] ?? null;
-}
+export { extractYouTubeId };
 
 export function formatTime(seconds: number) {
   if (!Number.isFinite(seconds) || seconds <= 0) return "0:00";
@@ -26,63 +10,56 @@ export function formatTime(seconds: number) {
   return `${mins}:${secs.toString().padStart(2, "0")}`;
 }
 
-function coverFromItunes(url?: string) {
-  if (!url) return "";
-  return url.replace("100x100bb", "600x600bb").replace("100x100", "600x600");
-}
-
-export function mapItunesTrack(song: ItunesSong): Track {
-  return {
-    id: `it-${song.trackId}`,
-    title: song.trackName,
-    artist: song.artistName,
-    album: song.collectionName || "Single",
-    cover: coverFromItunes(song.artworkUrl100),
-    duration: Math.round((song.trackTimeMillis || 30000) / 1000),
-    previewUrl: song.previewUrl,
-  };
-}
-
-export async function searchItunes(term: string, limit = 20): Promise<Track[]> {
-  const query = term.trim();
-  if (!query) return [];
-  const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&media=music&entity=song&limit=${limit}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("Search failed");
-  const data = (await res.json()) as { results?: ItunesSong[] };
-  return (data.results ?? []).map(mapItunesTrack);
-}
-
-export async function findYoutubeId(title: string, artist: string) {
+export async function findYoutubeId(title: string, artist: string): Promise<{ youtubeId: string; duration?: number } | null> {
   const query = `${title} ${artist}`.trim();
   if (!query) return null;
   try {
-    const res = await fetch(`/api/find-track?q=${encodeURIComponent(query)}`);
+    const res = await fetch(`/api/youtube/video-info?q=${encodeURIComponent(query)}`);
     if (!res.ok) return null;
-    const data = (await res.json()) as { youtubeId?: string | null; duration?: number | null };
-    if (!data.youtubeId) return null;
-    return { youtubeId: data.youtubeId, duration: data.duration || undefined };
+    const data = await res.json();
+    if (!data.videoId) return null;
+    return { youtubeId: data.videoId, duration: data.duration || undefined };
   } catch {
     return null;
   }
 }
 
-export async function seedDiscoverTracks(): Promise<Track[]> {
-  const queries = ["lofi beats", "synthwave", "pop hits", "indie mix"];
-  const batches = await Promise.allSettled(
-    queries.map((query) => searchItunes(query, 6))
-  );
-  const seen = new Set<string>();
-  const tracks: Track[] = [];
-  for (const batch of batches) {
-    if (batch.status !== "fulfilled") continue;
-    for (const track of batch.value) {
-      if (seen.has(track.id)) continue;
-      seen.add(track.id);
-      tracks.push(track);
-    }
-  }
-  return tracks.slice(0, 18);
+/**
+ * Seed tracks for new rooms - curated YouTube tracks
+ */
+export function seedDiscoverTracks(): Track[] {
+  const seedItems = [
+    {
+      videoId: "dQw4w9WgXcQ",
+      title: "Never Gonna Give You Up",
+      artist: "Rick Astley",
+      duration: 213,
+      thumbnailUrl: "https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+    },
+    {
+      videoId: "2Vv-BfVoq4g",
+      title: "Perfect",
+      artist: "Ed Sheeran",
+      duration: 263,
+      thumbnailUrl: "https://img.youtube.com/vi/2Vv-BfVoq4g/hqdefault.jpg",
+    },
+    {
+      videoId: "kJQP7kiw5Fk",
+      title: "Despacito",
+      artist: "Luis Fonsi ft. Daddy Yankee",
+      duration: 282,
+      thumbnailUrl: "https://img.youtube.com/vi/kJQP7kiw5Fk/hqdefault.jpg",
+    },
+    {
+      videoId: "fJ9rUzIMcZQ",
+      title: "Bohemian Rhapsody",
+      artist: "Queen",
+      duration: 359,
+      thumbnailUrl: "https://img.youtube.com/vi/fJ9rUzIMcZQ/hqdefault.jpg",
+    },
+  ];
+
+  return seedItems.map(createTrackFromYouTube);
 }
 
 export function playlistCoverFromTracks(tracks: Track[], fallback: string) {

@@ -1,6 +1,6 @@
 {
-  "name": "Shree's Playlist",
-  "description": "Personal music room with login, playlists, and volume controls.",
+  "name": "Auxy",
+  "description": "Auxy music room with Firebase authentication, Firestore sync, and YouTube playlists.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

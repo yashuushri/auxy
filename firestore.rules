@@ -1,0 +1,69 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global catch-all deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128;
+    }
+
+    function isValidUser(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.username is string && data.username.size() >= 2 && data.username.size() <= 64
+        && data.displayName is string && data.displayName.size() <= 100
+        && (!('bio' in data) || (data.bio is string && data.bio.size() <= 300))
+        && (!('volume' in data) || (data.volume is number && data.volume >= 0 && data.volume <= 100));
+    }
+
+    function isValidPlaylist(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.ownerId is string && data.ownerId == request.auth.uid
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 120
+        && (!('trackIds' in data) || (data.trackIds is list && data.trackIds.size() <= 2000))
+        && (!('isPublic' in data) || data.isPublic is bool);
+    }
+
+    function isValidTrack(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.youtubeId is string && data.youtubeId.size() <= 32
+        && data.title is string && data.title.size() <= 200
+        && data.artist is string && data.artist.size() <= 200;
+    }
+
+    // Connection test document
+    match /test/connection {
+      allow read: if true;
+    }
+
+    // User profiles
+    match /users/{userId} {
+      allow get: if true;
+      allow list: if true;
+      allow create, update: if isSignedIn() && request.auth.uid == userId && isValidUser(request.resource.data);
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Playlists
+    match /playlists/{playlistId} {
+      allow get: if resource.data.isPublic == true || (isSignedIn() && resource.data.ownerId == request.auth.uid);
+      allow list: if resource.data.isPublic == true || (isSignedIn() && resource.data.ownerId == request.auth.uid);
+      allow create: if isSignedIn() && isValidId(playlistId) && request.resource.data.ownerId == request.auth.uid && isValidPlaylist(request.resource.data);
+      allow update: if isSignedIn() && isValidId(playlistId) && resource.data.ownerId == request.auth.uid && request.resource.data.ownerId == request.auth.uid && isValidPlaylist(request.resource.data);
+      allow delete: if isSignedIn() && isValidId(playlistId) && resource.data.ownerId == request.auth.uid;
+    }
+
+    // Tracks catalog
+    match /tracks/{trackId} {
+      allow get, list: if true;
+      allow create, update: if isSignedIn() && isValidId(trackId) && isValidTrack(request.resource.data);
+      allow delete: if false;
+    }
+  }
+}

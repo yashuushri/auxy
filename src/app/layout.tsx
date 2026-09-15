@@ -14,8 +14,16 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Shree's Playlist",
-  description: "Personal music room with login, playlists, and volume.",
+  title: "Auxy",
+  description: "Auxy music room with Discord authentication and YouTube playlists.",
+  openGraph: {
+    title: "Auxy",
+    description: "Auxy music room with Discord authentication and YouTube playlists.",
+  },
+  icons: {
+    icon: "/logo.png",
+    apple: "/logo.png",
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

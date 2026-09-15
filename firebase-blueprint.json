@@ -1,0 +1,183 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile containing identity, preferences, and display details",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The unique Firebase Auth UID of the user",
+          "maxLength": 128
+        },
+        "username": {
+          "type": "string",
+          "description": "Unique handle for the profile URL",
+          "maxLength": 64
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Public display name",
+          "maxLength": 100
+        },
+        "avatar": {
+          "type": "string",
+          "description": "URL to user's avatar",
+          "maxLength": 500
+        },
+        "bio": {
+          "type": "string",
+          "description": "Short bio or tagline",
+          "maxLength": 300
+        },
+        "background": {
+          "type": "object",
+          "description": "User profile background configuration"
+        },
+        "volume": {
+          "type": "number",
+          "description": "Playback volume preference (0-100)"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp"
+        }
+      },
+      "required": ["id", "username", "displayName"]
+    },
+    "Playlist": {
+      "title": "Playlist",
+      "description": "User created music playlist or linked YouTube playlist",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique playlist identifier",
+          "maxLength": 128
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the user who owns this playlist",
+          "maxLength": 128
+        },
+        "name": {
+          "type": "string",
+          "description": "Title of the playlist",
+          "maxLength": 120
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of the playlist",
+          "maxLength": 500
+        },
+        "cover": {
+          "type": "string",
+          "description": "Cover artwork image URL",
+          "maxLength": 500
+        },
+        "isPublic": {
+          "type": "boolean",
+          "description": "Whether the playlist is publicly viewable"
+        },
+        "type": {
+          "type": "string",
+          "description": "Type of playlist: native or youtube",
+          "enum": ["native", "youtube"]
+        },
+        "youtubePlaylistId": {
+          "type": "string",
+          "description": "Optional YouTube playlist ID",
+          "maxLength": 128
+        },
+        "trackIds": {
+          "type": "array",
+          "description": "List of track IDs in this playlist"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp"
+        }
+      },
+      "required": ["id", "ownerId", "name"]
+    },
+    "Track": {
+      "title": "Track",
+      "description": "Cached YouTube music track metadata",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique track identifier",
+          "maxLength": 128
+        },
+        "youtubeId": {
+          "type": "string",
+          "description": "11-character YouTube video ID",
+          "maxLength": 32
+        },
+        "title": {
+          "type": "string",
+          "description": "Track title",
+          "maxLength": 200
+        },
+        "artist": {
+          "type": "string",
+          "description": "Artist or channel name",
+          "maxLength": 200
+        },
+        "album": {
+          "type": "string",
+          "description": "Album or category name",
+          "maxLength": 200
+        },
+        "cover": {
+          "type": "string",
+          "description": "Thumbnail URL",
+          "maxLength": 500
+        },
+        "duration": {
+          "type": "number",
+          "description": "Track duration in seconds"
+        },
+        "url": {
+          "type": "string",
+          "description": "Direct YouTube URL",
+          "maxLength": 500
+        }
+      },
+      "required": ["id", "youtubeId", "title", "artist"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/User"
+      },
+      "description": "User profile documents indexed by auth UID"
+    },
+    "/playlists/{playlistId}": {
+      "schema": {
+        "$ref": "#/entities/Playlist"
+      },
+      "description": "User music playlists"
+    },
+    "/tracks/{trackId}": {
+      "schema": {
+        "$ref": "#/entities/Track"
+      },
+      "description": "Global catalog of saved YouTube music tracks"
+    }
+  }
+}

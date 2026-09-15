@@ -1,4 +1,4 @@
-export const BACKGROUND_PRESETS = [
+export const ROOM_PRESETS = [
   {
     id: "midnight",
     name: "Midnight",
@@ -24,32 +24,17 @@ export const BACKGROUND_PRESETS = [
     name: "Violet",
     value: "linear-gradient(160deg, #120816 0%, #2b1250 48%, #1a0b2e 100%)",
   },
-  {
-    id: "club",
-    name: "Club",
-    value:
-      "url(https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&w=1920&q=80) center / cover no-repeat",
-  },
-  {
-    id: "vinyl",
-    name: "Vinyl",
-    value:
-      "url(https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=1920&q=80) center / cover no-repeat",
-  },
-  {
-    id: "city",
-    name: "City",
-    value:
-      "url(https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?auto=format&fit=crop&w=1920&q=80) center / cover no-repeat",
-  },
 ] as const;
+
+export const BACKGROUND_PRESETS = ROOM_PRESETS;
 
 export const DEFAULT_BACKGROUND = {
   kind: "preset" as const,
-  value: BACKGROUND_PRESETS[0].value,
+  value: ROOM_PRESETS[0].value,
 };
 
 export function backgroundCss(value: string) {
+  if (!value) return "linear-gradient(160deg, #0b0b12 0%, #1b1230 48%, #0d1b2a 100%)";
   if (value.startsWith("url(") || value.startsWith("linear-gradient")) {
     return value;
   }
@@ -57,7 +42,7 @@ export function backgroundCss(value: string) {
     return value;
   }
   if (value.startsWith("data:") || value.startsWith("http")) {
-    return `url(${value}) center / cover no-repeat`;
+    return `url("${value}") center / cover no-repeat`;
   }
   return value;
 }

@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { LogOut, Music2, Settings2, UserRound } from "lucide-react";
+import Image from "next/image";
+import { LogOut, Settings2, UserRound } from "lucide-react";
 import { EditPanel } from "@/components/edit-panel";
 import { FloatingWindow } from "@/components/floating-window";
 import { RoomBackground } from "@/components/room-background";
@@ -55,18 +56,41 @@ export function DesktopHome() {
         <button
           type="button"
           className={cn(
-            "pointer-events-auto flex cursor-pointer items-center gap-2 text-sm font-medium",
+            "pointer-events-auto flex cursor-pointer items-center gap-2 text-sm font-medium tracking-tight",
             lightRoom
               ? "text-neutral-950 drop-shadow-[0_1px_2px_rgba(255,255,255,0.85)]"
               : "text-white drop-shadow-[0_1px_4px_rgba(0,0,0,0.8)]"
           )}
-          aria-label="Reload Shree's Playlist"
+          aria-label="Reload Auxy"
           onClick={() => window.location.reload()}
         >
-          <Music2 className="size-4" />
-          Shree&apos;s Playlist
+          <div className="relative size-5 overflow-hidden rounded-md">
+            <Image
+              src="/logo.png"
+              alt="Auxy Logo"
+              fill
+              sizes="20px"
+              className="object-contain"
+              priority
+              referrerPolicy="no-referrer"
+            />
+          </div>
+          Auxy
         </button>
         <div className="pointer-events-auto flex items-center gap-2">
+          <a
+            href={`/u/${user.username}`}
+            target="_blank"
+            rel="noreferrer"
+            className={cn(
+              "inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-xs font-medium transition-colors",
+              overlayBtn
+            )}
+            title="Public profile"
+          >
+            <UserRound className="size-3.5" />
+            @{user.username}
+          </a>
           <Button
             size="icon-sm"
             variant="outline"
@@ -75,10 +99,9 @@ export function DesktopHome() {
             aria-label="Edit profile"
             onClick={toggleEdit}
           >
-            <UserRound />
+            <Settings2 />
           </Button>
           <Button size="sm" variant="outline" className={overlayBtn} onClick={() => setRoomOpen(true)}>
-            <Settings2 data-icon="inline-start" />
             Room
           </Button>
           <Button size="sm" variant="outline" className={overlayBtn} onClick={logout}>

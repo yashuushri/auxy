@@ -1,11 +1,9 @@
 import { DEFAULT_BACKGROUND } from "@/lib/backgrounds";
-import { ACCOUNT_CLEAN_VERSION } from "@/lib/clean-version";
 import { colorFromName } from "@/lib/music";
 import type { Track, UserAccount } from "@/lib/types";
 
-const USERS_KEY = "mp_users_v2";
-const SESSION_KEY = "mp_session_v2";
-const CLEAN_FLAG = `mp_clean_${ACCOUNT_CLEAN_VERSION}`;
+const USERS_KEY = "auxy_users_v3";
+const SESSION_KEY = "auxy_session_v3";
 
 function readUsers(): Record<string, UserAccount> {
   if (typeof window === "undefined") return {};
@@ -19,25 +17,6 @@ function readUsers(): Record<string, UserAccount> {
 
 function writeUsers(users: Record<string, UserAccount>) {
   localStorage.setItem(USERS_KEY, JSON.stringify(users));
-}
-
-function removePrefixedKeys(storage: Storage, prefix: string) {
-  const keys: string[] = [];
-  for (let i = 0; i < storage.length; i++) {
-    const key = storage.key(i);
-    if (key?.startsWith(prefix)) keys.push(key);
-  }
-  for (const key of keys) storage.removeItem(key);
-}
-
-export function wipeSiteData() {
-  if (typeof window === "undefined") return false;
-  if (localStorage.getItem(CLEAN_FLAG)) return false;
-  removePrefixedKeys(localStorage, "mp_");
-  removePrefixedKeys(sessionStorage, "mp_");
-  localStorage.removeItem("theme");
-  localStorage.setItem(CLEAN_FLAG, "1");
-  return true;
 }
 
 export function usernameKey(username: string) {
@@ -65,22 +44,8 @@ export function saveUser(user: UserAccount) {
   return user;
 }
 
-export async function hashPassword(password: string, salt: string) {
-  const encoded = new TextEncoder().encode(`${salt}:${password}`);
-  const digest = await crypto.subtle.digest("SHA-256", encoded);
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-export function makeSalt() {
-  return Array.from(crypto.getRandomValues(new Uint8Array(16)))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
-
 export function isValidUsername(username: string) {
-  return /^[a-zA-Z0-9._]{3,20}$/.test(username.trim());
+  return /^[a-zA-Z0-9._]{2,32}$/.test(username.trim());
 }
 
 export function avatarInitials(name: string) {
@@ -88,17 +53,17 @@ export function avatarInitials(name: string) {
   const parts = cleaned.split(/\s+/).filter(Boolean);
   if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
   const compact = cleaned.replace(/\s+/g, "");
-  return compact.slice(0, 2).toUpperCase() || "SP";
+  return compact.slice(0, 2).toUpperCase() || "AX";
 }
 
 export function isCustomPhoto(avatar: string) {
-  return /^data:image\/(png|jpe?g|gif|webp|bmp)/i.test(avatar);
+  return /^data:image\/(png|jpe?g|gif|webp|bmp)/i.test(avatar) || avatar.startsWith("http");
 }
 
 export function defaultAvatar(name: string) {
   const initials = avatarInitials(name);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <rect width="128" height="128" fill="#16161f"/>
+  <rect width="128" height="128" fill="#12121a"/>
   <text x="64" y="80" text-anchor="middle" font-family="system-ui,Segoe UI,sans-serif" font-size="48" font-weight="600" fill="#f4f4f5">${initials}</text>
 </svg>`;
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
@@ -109,26 +74,29 @@ export function withDefaultAvatar(user: UserAccount): UserAccount {
   return { ...user, avatar: defaultAvatar(user.displayName || user.username) };
 }
 
-export function createAccount(username: string, passwordHash: string, salt: string): UserAccount {
-  const trimmed = username.trim();
+export function createDiscordAccount(discordUser: {
+  id: string;
+  discordId: string;
+  username: string;
+  displayName: string;
+  avatar: string;
+}): UserAccount {
+  const trimmed = discordUser.username.trim().toLowerCase();
   return {
+    id: discordUser.id,
+    discordId: discordUser.discordId,
     username: trimmed,
-    passwordHash,
-    salt,
-    displayName: trimmed,
-    avatar: defaultAvatar(trimmed),
+    displayName: discordUser.displayName || trimmed,
+    avatar: discordUser.avatar || defaultAvatar(trimmed),
+    bio: "",
     background: DEFAULT_BACKGROUND,
     playlists: [
       {
-        id: "liked",
-        name: "Liked Songs",
-        cover: colorFromName("Liked Songs"),
-        trackIds: [],
-      },
-      {
-        id: "discover",
-        name: "Discover Mix",
-        cover: colorFromName("Discover Mix"),
+        id: "favorites",
+        name: "Favorites",
+        description: "My favorite YouTube songs",
+        isPublic: true,
+        cover: colorFromName("Favorites"),
         trackIds: [],
       },
     ],
