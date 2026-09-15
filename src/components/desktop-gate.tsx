@@ -16,16 +16,17 @@ function isPhoneOrTablet() {
 
 export function DesktopGate({ children }: { children: React.ReactNode }) {
   const [deviceBlocked, setDeviceBlocked] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    // Only detect actual mobile phones, but allow embedded iframes and flexible previews
+    setMounted(true);
     setDeviceBlocked(isPhoneOrTablet());
   }, []);
 
   return (
     <>
-      <div className={cn(deviceBlocked ? "hidden md:block" : "block")}>{children}</div>
-      {deviceBlocked && (
+      <div className={cn(mounted && deviceBlocked ? "hidden md:block" : "block")}>{children}</div>
+      {mounted && deviceBlocked && (
         <div
           className="min-h-svh flex flex-col items-center justify-center bg-background px-6 py-16 text-center md:hidden"
         >

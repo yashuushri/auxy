@@ -12,7 +12,11 @@ import {
 import { toast } from "sonner";
 import { useAuth } from "@/context/auth-context";
 import {
+  cleanYouTubeTitle,
   extractYouTubeId,
+  formatArtistWithPlatform,
+  generatePlaylistNameFromSong,
+  getPrimaryArtist,
   isValidYouTubeId,
   parseYouTubeUrl,
 } from "@/lib/youtube";
@@ -90,9 +94,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const [duration, setDuration] = useState(0);
   const [activePlaylistId, setActivePlaylistId] = useState("favorites");
 
-  // State for YouTube-linked playlist playback details
-  const [ytPlayingTitle, setYtPlayingTitle] = useState<string>("");
-  const [ytPlayingAuthor, setYtPlayingAuthor] = useState<string>("");
+  // State for YouTube playback details
   const [ytPlayingVideoId, setYtPlayingVideoId] = useState<string>("");
   const loadedYtPlaylistRef = useRef<string | null>(null);
   const loadedVideoIdRef = useRef<string | null>(null);
@@ -106,6 +108,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
   const shuffleBag = useRef<number[]>([]);
   const startedAtRef = useRef<number>(0);
+  const hydrationRunIdRef = useRef<number>(0);
+  const resolvedCacheRef = useRef<
+    Map<string, { title: string; artist: string; duration: number; suggestedPlaylistName?: string }>
+  >(new Map());
 
   const playlists = useMemo(() => user?.playlists ?? [], [user?.playlists]);
   const library = useMemo(() => user?.library ?? [], [user?.library]);
@@ -115,34 +121,16 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     return playlists.find((item) => item.id === activePlaylistId) ?? playlists[0];
   }, [activePlaylistId, playlists]);
 
-  const isYouTubePlaylist = activePlaylist?.type === "youtube" && Boolean(activePlaylist.youtubePlaylistId);
-
   const tracks = useMemo(() => {
     if (!activePlaylist) return library;
-    if (isYouTubePlaylist) return [];
     return activePlaylist.trackIds
       .map((id) => library.find((track) => track.id === id))
       .filter((track): track is Track => Boolean(track));
-  }, [activePlaylist, isYouTubePlaylist, library]);
+  }, [activePlaylist, library]);
 
-  // Synthetic current track for YouTube-linked playlist or standard track
   const currentTrack: Track | null = useMemo(() => {
-    if (isYouTubePlaylist && activePlaylist) {
-      return {
-        id: `yt-pl-current-${ytPlayingVideoId || activePlaylist.youtubePlaylistId}`,
-        title: ytPlayingTitle || activePlaylist.name,
-        artist: ytPlayingAuthor || "YouTube",
-        cover: ytPlayingVideoId
-          ? `https://img.youtube.com/vi/${ytPlayingVideoId}/hqdefault.jpg`
-          : `https://img.youtube.com/vi/${activePlaylist.youtubePlaylistId}/hqdefault.jpg`,
-        duration: duration || 0,
-        album: activePlaylist.name,
-        youtubeId: ytPlayingVideoId || undefined,
-        url: ytPlayingVideoId ? `https://www.youtube.com/watch?v=${ytPlayingVideoId}` : undefined,
-      };
-    }
     return tracks[currentIndex] ?? null;
-  }, [isYouTubePlaylist, activePlaylist, ytPlayingVideoId, ytPlayingTitle, ytPlayingAuthor, duration, tracks, currentIndex]);
+  }, [tracks, currentIndex]);
 
   // Keep startedAt updated when playing begins
   useEffect(() => {
@@ -213,29 +201,15 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const nextTrack = useCallback(() => {
-    if (isYouTubePlaylist) {
-      if (youtubeRef.current && isPlayerReadyRef.current) {
-        youtubeRef.current.nextVideo();
-      }
-      setIsPlaying(true);
-      return;
-    }
     if (!tracks.length) return;
     const upcoming = nextIndex(currentIndex, false);
     if (upcoming === currentIndex && loopMode !== "all" && !isShuffle) return;
     setCurrentIndex(upcoming);
     setProgress(0);
     setIsPlaying(true);
-  }, [currentIndex, isShuffle, isYouTubePlaylist, loopMode, nextIndex, tracks.length]);
+  }, [currentIndex, isShuffle, loopMode, nextIndex, tracks.length]);
 
   const prevTrack = useCallback(() => {
-    if (isYouTubePlaylist) {
-      if (youtubeRef.current && isPlayerReadyRef.current) {
-        youtubeRef.current.previousVideo();
-      }
-      setIsPlaying(true);
-      return;
-    }
     if (progress > 3) {
       setProgress(0);
       try {
@@ -251,10 +225,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     setCurrentIndex((index) => (index - 1 + tracks.length) % Math.max(tracks.length, 1));
     setProgress(0);
     setIsPlaying(true);
-  }, [isYouTubePlaylist, progress, tracks.length]);
+  }, [progress, tracks.length]);
 
   const onTrackEnded = useCallback(() => {
-    if (isYouTubePlaylist) return; // YouTube IFrame handles internal playlist next
     if (!tracks.length) return;
     if (loopMode === "one") {
       restartCurrent();
@@ -272,12 +245,16 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     setCurrentIndex(upcoming);
     setProgress(0);
     setIsPlaying(true);
-  }, [currentIndex, isYouTubePlaylist, loopMode, nextIndex, restartCurrent, tracks.length]);
+  }, [currentIndex, loopMode, nextIndex, restartCurrent, tracks.length]);
 
   const onTrackEndedRef = useRef(onTrackEnded);
   const nextTrackRef = useRef(nextTrack);
+  const activePlaylistRef = useRef(activePlaylist);
+  const hydratePlaylistTracksRef = useRef<((playlistId: string, videoIds: string[]) => void) | null>(null);
+
   onTrackEndedRef.current = onTrackEnded;
   nextTrackRef.current = nextTrack;
+  activePlaylistRef.current = activePlaylist;
 
   // Single persistent YouTube IFrame instance
   useEffect(() => {
@@ -332,15 +309,57 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
               if (event.data === api.PlayerState.PLAYING) {
                 setIsPlaying(true);
                 const data = event.target.getVideoData?.();
-                if (data) {
-                  if (data.title) setYtPlayingTitle(data.title);
-                  if (data.author) setYtPlayingAuthor(data.author);
-                  if (data.video_id) setYtPlayingVideoId(data.video_id);
+                if (data?.video_id) {
+                  setYtPlayingVideoId(data.video_id);
+                  // If YouTube player has real title/author, sync immediately to avoid placeholder lag
+                  if (data.title && data.title !== "YouTube Video" && data.title !== "YouTube Track") {
+                    const rawTitle = data.title;
+                    const author = data.author || "YouTube";
+                    const { title, artist } = cleanYouTubeTitle(rawTitle);
+                    const primaryCreator = getPrimaryArtist(artist === "YouTube" ? author : artist);
+                    const formattedArtist = formatArtistWithPlatform(primaryCreator);
+                    const cleanTitle = title || rawTitle;
+
+                    resolvedCacheRef.current.set(data.video_id, {
+                      title: cleanTitle,
+                      artist: formattedArtist,
+                      duration: event.target.getDuration?.() || 0,
+                    });
+
+                    updateUser((current) => {
+                      const needsFix = current.library.some(
+                        (t) =>
+                          t.youtubeId === data.video_id &&
+                          (!t.title || /^Track\s+\d+$/i.test(t.title) || t.title === "YouTube Track" || t.artist === "YouTube")
+                      );
+                      if (!needsFix) return current;
+                      return {
+                        ...current,
+                        library: current.library.map((t) =>
+                          t.youtubeId === data.video_id
+                            ? {
+                                ...t,
+                                title: cleanTitle,
+                                artist: formattedArtist,
+                                duration: event.target.getDuration?.() || t.duration,
+                              }
+                            : t
+                        ),
+                      };
+                    });
+                  }
                 }
               } else if (event.data === api.PlayerState.PAUSED) {
                 setIsPlaying(false);
               } else if (event.data === api.PlayerState.ENDED) {
                 onTrackEndedRef.current();
+              }
+
+              const targetPl = activePlaylistRef.current?.youtubePlaylistId;
+              const playerWithPlaylist = event.target as unknown as { getPlaylist?: () => string[] };
+              const pl = playerWithPlaylist.getPlaylist?.();
+              if (targetPl && Array.isArray(pl) && pl.length > 0) {
+                hydratePlaylistTracksRef.current?.(targetPl, pl);
               }
             },
             onError: (event: { data: number; target: YT.Player }) => {
@@ -361,9 +380,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Play native track when currentTrack changes
+  // Play track when currentTrack changes
   useEffect(() => {
-    if (isYouTubePlaylist) return;
     const videoId = currentTrack?.youtubeId;
     if (!isValidYouTubeId(videoId)) return;
 
@@ -388,7 +406,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         shouldPlay: isPlayingRef.current,
       };
     }
-  }, [currentTrack?.youtubeId, isYouTubePlaylist]);
+  }, [currentTrack?.youtubeId]);
 
   // Sync play/pause toggle
   useEffect(() => {
@@ -431,7 +449,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       const targetList = playlistId
         ? playlists.find((p) => p.id === playlistId)
         : activePlaylist;
-      if (targetList && targetList.type !== "youtube") {
+      if (targetList) {
         const trackId = targetList.trackIds[index];
         const t = library.find((item) => item.id === trackId);
         if (isValidYouTubeId(t?.youtubeId)) {
@@ -458,31 +476,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const playYouTubePlaylist = useCallback(
     (playlistId: string) => {
       const target = playlists.find((p) => p.id === playlistId || p.youtubePlaylistId === playlistId);
-      const ytId = target?.youtubePlaylistId || playlistId;
-      if (!ytId) return;
-
-      if (target) setActivePlaylistId(target.id);
-      loadedYtPlaylistRef.current = ytId;
-      loadedVideoIdRef.current = null;
-      setIsPlaying(true);
-
-      const player = youtubeRef.current;
-      if (player && isPlayerReadyRef.current) {
-        player.loadPlaylist({
-          listType: "playlist",
-          list: ytId,
-        });
-        player.playVideo();
-      } else {
-        pendingActionRef.current = {
-          type: "playlist",
-          playlistId: ytId,
-          shouldPlay: true,
-        };
+      if (!target) return;
+      setActivePlaylistId(target.id);
+      if (target.trackIds.length > 0) {
+        playTrack(0, target.id);
       }
-      toast.success(`Playing ${target?.name || "YouTube Playlist"}`);
+      toast.success(`Playing ${target.name}`);
     },
-    [playlists]
+    [playlists, playTrack]
   );
 
   const playTrackById = useCallback(
@@ -500,26 +501,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   );
 
   const togglePlay = useCallback(() => {
-    if (isYouTubePlaylist && activePlaylist?.youtubePlaylistId) {
-      const ytId = activePlaylist.youtubePlaylistId;
-      const player = youtubeRef.current;
-      if (loadedYtPlaylistRef.current !== ytId) {
-        playYouTubePlaylist(activePlaylist.id);
-        return;
-      }
-      if (isPlaying) {
-        if (player && isPlayerReadyRef.current) player.pauseVideo();
-        setIsPlaying(false);
-      } else {
-        if (player && isPlayerReadyRef.current) player.playVideo();
-        setIsPlaying(true);
+    if (!currentTrack) {
+      if (tracks.length > 0) {
+        playTrack(0);
       }
       return;
     }
-
-    if (!currentTrack) return;
     setIsPlaying((value) => !value);
-  }, [activePlaylist, currentTrack, isPlaying, isYouTubePlaylist, playYouTubePlaylist]);
+  }, [currentTrack, playTrack, tracks.length]);
 
   const toggleLoopMode = useCallback(() => {
     setLoopMode((mode) => (mode === "off" ? "all" : mode === "all" ? "one" : "off"));
@@ -586,10 +575,171 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     [activePlaylistId, updateUser]
   );
 
+  const hydratePlaylistTracks = useCallback(
+    async (playlistId: string, videoIds: string[]) => {
+      if (!videoIds || !videoIds.length) return;
+      const cleanIds = Array.from(
+        new Set(
+          videoIds
+            .map((id) => extractYouTubeId(id) || id)
+            .filter((id): id is string => Boolean(id) && typeof id === "string" && id.length === 11)
+        )
+      );
+      if (!cleanIds.length) return;
+
+      const runId = ++hydrationRunIdRef.current;
+
+      // 1. Instantly register placeholder track records if not already in library & playlist
+      updateUser((current) => {
+        const existingTrackMap = new Map(current.library.map((t) => [t.id, t]));
+        const trackIdsToAdd: string[] = [];
+
+        for (let i = 0; i < cleanIds.length; i++) {
+          const vid = cleanIds[i];
+          const trackId = `yt-${vid}`;
+          trackIdsToAdd.push(trackId);
+
+          if (!existingTrackMap.has(trackId)) {
+            const cached = resolvedCacheRef.current.get(vid);
+            existingTrackMap.set(trackId, {
+              id: trackId,
+              youtubeId: vid,
+              provider: "youtube" as const,
+              providerId: vid,
+              title: cached?.title || `Track ${i + 1}`,
+              artist: cached?.artist || "YouTube",
+              album: "YouTube Playlist",
+              cover: `https://img.youtube.com/vi/${vid}/hqdefault.jpg`,
+              duration: cached?.duration || 0,
+              url: `https://www.youtube.com/watch?v=${vid}`,
+              sourceUrl: `https://www.youtube.com/watch?v=${vid}`,
+            });
+          }
+        }
+
+        const updatedLibrary = Array.from(existingTrackMap.values());
+        const updatedPlaylists = current.playlists.map((pl) => {
+          if (pl.youtubePlaylistId === playlistId || pl.id === `yt-pl-${playlistId}` || pl.id === playlistId) {
+            return {
+              ...pl,
+              trackIds: Array.from(new Set([...pl.trackIds, ...trackIdsToAdd])),
+              cover: pl.cover || `https://img.youtube.com/vi/${cleanIds[0]}/hqdefault.jpg`,
+            };
+          }
+          return pl;
+        });
+
+        return {
+          ...current,
+          library: updatedLibrary,
+          playlists: updatedPlaylists,
+        };
+      });
+
+      // 2. Identify which tracks still need metadata resolution
+      const pendingIds = cleanIds.filter((vid) => {
+        const cached = resolvedCacheRef.current.get(vid);
+        if (!cached) return true;
+        if (!cached.title || /^Track\s+\d+$/i.test(cached.title) || cached.title === "YouTube Track") return true;
+        return false;
+      });
+
+      // 3. Process pending tracks in chunks of 15 via batch API, with non-blocking delays
+      const chunkSize = 15;
+      for (let i = 0; i < pendingIds.length; i += chunkSize) {
+        if (hydrationRunIdRef.current !== runId) break; // If a new run started, abort old one
+
+        const chunk = pendingIds.slice(i, i + chunkSize);
+        try {
+          const res = await fetch("/api/youtube/video-info", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ videoIds: chunk }),
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            const results: Record<
+              string,
+              {
+                title: string;
+                artist: string;
+                duration?: number;
+                suggestedPlaylistName?: string;
+                channelName?: string;
+              }
+            > = data.results || {};
+
+            // Save to cache
+            Object.entries(results).forEach(([vid, info]) => {
+              resolvedCacheRef.current.set(vid, {
+                title: info.title,
+                artist: info.artist || (info.channelName ? formatArtistWithPlatform(info.channelName) : "YouTube"),
+                duration: info.duration || 0,
+                suggestedPlaylistName: info.suggestedPlaylistName,
+              });
+            });
+
+            // Apply all updates for this chunk in ONE single state update
+            if (hydrationRunIdRef.current === runId) {
+              updateUser((current) => {
+                const nextLibrary = current.library.map((t) => {
+                  if (t.youtubeId && results[t.youtubeId]) {
+                    const info = results[t.youtubeId];
+                    return {
+                      ...t,
+                      title: info.title || t.title,
+                      artist:
+                        info.artist || (info.channelName ? formatArtistWithPlatform(info.channelName) : t.artist),
+                      duration: info.duration || t.duration,
+                    };
+                  }
+                  return t;
+                });
+
+                // If first track's metadata was resolved and playlist has a generic title, update playlist name
+                let firstTrackSuggestedName: string | undefined;
+                if (results[cleanIds[0]]) {
+                  firstTrackSuggestedName = results[cleanIds[0]].suggestedPlaylistName;
+                }
+
+                const nextPlaylists = current.playlists.map((pl) => {
+                  if (
+                    (pl.youtubePlaylistId === playlistId || pl.id === `yt-pl-${playlistId}` || pl.id === playlistId) &&
+                    (pl.name === "YouTube Playlist" || !pl.name) &&
+                    firstTrackSuggestedName
+                  ) {
+                    return { ...pl, name: firstTrackSuggestedName };
+                  }
+                  return pl;
+                });
+
+                return {
+                  ...current,
+                  library: nextLibrary,
+                  playlists: nextPlaylists,
+                };
+              });
+            }
+          }
+        } catch (err) {
+          console.warn("Error hydrating chunk:", err);
+        }
+
+        // Non-blocking yield to event loop so the UI remains 100% fluid without frame drops
+        await new Promise((resolve) => setTimeout(resolve, 120));
+      }
+    },
+    [updateUser]
+  );
+
+  hydratePlaylistTracksRef.current = hydratePlaylistTracks;
+
   const saveYouTubePlaylist = useCallback(
     async (urlOrId: string, customName?: string) => {
       const parsed = parseYouTubeUrl(urlOrId);
       const playlistId = parsed.type === "playlist" ? parsed.playlistId : urlOrId.trim();
+      const directVideoId = parsed.type === "playlist" ? parsed.videoId : undefined;
 
       if (!playlistId || !/^[A-Za-z0-9_-]+$/.test(playlistId)) {
         toast.error("Please provide a valid YouTube playlist URL");
@@ -597,6 +747,35 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       }
 
       let detectedTitle = customName?.trim();
+      let firstTrack: Track | null = null;
+
+      if (directVideoId) {
+        try {
+          const res = await fetch(`/api/youtube/video-info?videoId=${directVideoId}`);
+          if (res.ok) {
+            const info = await res.json();
+            if (!detectedTitle && info.suggestedPlaylistName) {
+              detectedTitle = info.suggestedPlaylistName;
+            }
+            firstTrack = {
+              id: `yt-${directVideoId}`,
+              youtubeId: directVideoId,
+              provider: "youtube",
+              providerId: directVideoId,
+              title: info.title || `Track ${directVideoId}`,
+              artist: info.artist || (info.channelName ? formatArtistWithPlatform(info.channelName) : "YouTube"),
+              album: detectedTitle || "YouTube Playlist",
+              cover: `https://img.youtube.com/vi/${directVideoId}/hqdefault.jpg`,
+              duration: info.duration || 0,
+              url: `https://www.youtube.com/watch?v=${directVideoId}`,
+              sourceUrl: `https://www.youtube.com/watch?v=${directVideoId}`,
+            };
+          }
+        } catch {
+          // ignore
+        }
+      }
+
       if (!detectedTitle) {
         try {
           const oembedRes = await fetch(
@@ -604,7 +783,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           );
           if (oembedRes.ok) {
             const data = await oembedRes.json();
-            if (data.title) detectedTitle = data.title;
+            if (data.title) {
+              detectedTitle = generatePlaylistNameFromSong(data.title) || data.title;
+            }
           }
         } catch {
           // Fallback
@@ -615,30 +796,63 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       const newPl: Playlist = {
         id: `yt-pl-${playlistId}`,
         name: playlistTitle,
-        type: "youtube",
+        type: "native",
         youtubePlaylistId: playlistId,
-        description: "YouTube playlist reference",
-        cover: `https://img.youtube.com/vi/${playlistId}/hqdefault.jpg`,
+        description: "",
+        cover: firstTrack?.cover || `https://img.youtube.com/vi/${directVideoId || playlistId}/hqdefault.jpg`,
         isPublic: true,
-        trackIds: [],
+        trackIds: firstTrack ? [firstTrack.id] : [],
       };
 
       updateUser((current) => {
+        const nextLibrary = firstTrack
+          ? current.library.some((t) => t.id === firstTrack.id)
+            ? current.library
+            : [...current.library, firstTrack]
+          : current.library;
+
         const exists = current.playlists.find((p) => p.youtubePlaylistId === playlistId || p.id === newPl.id);
         if (exists) {
           return {
             ...current,
-            playlists: current.playlists.map((p) => (p.id === exists.id ? { ...p, name: playlistTitle } : p)),
+            library: nextLibrary,
+            playlists: current.playlists.map((p) =>
+              p.id === exists.id
+                ? {
+                    ...p,
+                    name: playlistTitle,
+                    trackIds: firstTrack && !p.trackIds.includes(firstTrack.id) ? [...p.trackIds, firstTrack.id] : p.trackIds,
+                  }
+                : p
+            ),
           };
         }
         return {
           ...current,
+          library: nextLibrary,
           playlists: [...current.playlists, newPl],
         };
       });
 
       setActivePlaylistId(newPl.id);
+      setCurrentIndex(0);
+      setIsPlaying(true);
       toast.success("Playlist added");
+
+      const player = youtubeRef.current;
+      if (player && isPlayerReadyRef.current) {
+        player.cuePlaylist({
+          listType: "playlist",
+          list: playlistId,
+        });
+      } else {
+        pendingActionRef.current = {
+          type: "playlist",
+          playlistId,
+          shouldPlay: true,
+        };
+      }
+
       return newPl;
     },
     [updateUser]

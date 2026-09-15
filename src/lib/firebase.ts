@@ -10,11 +10,10 @@ import {
   User as FirebaseUser,
 } from "firebase/auth";
 import {
-  getFirestore,
   initializeFirestore,
+  getFirestore,
   doc,
   getDoc,
-  getDocFromServer,
   setDoc,
   getDocs,
   collection,
@@ -27,39 +26,17 @@ import type { UserAccount, Playlist, Track, PublicProfile } from "@/lib/types";
 // 1. Initialize Firebase App and Services
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
-// Use long-polling transport to prevent proxy/iframe connection buffering and 10s timeout warnings
-export const db = (() => {
-  try {
-    return initializeFirestore(
-      app,
-      {
-        experimentalForceLongPolling: true,
-      },
-      firebaseConfig.firestoreDatabaseId
-    ); /* CRITICAL: The app will break without this line */
-  } catch {
-    return getFirestore(app, firebaseConfig.firestoreDatabaseId); /* CRITICAL: The app will break without this line */
-  }
-})();
+try {
+  initializeFirestore(app, { experimentalAutoDetectLongPolling: true }, firebaseConfig.firestoreDatabaseId);
+} catch {
+  // Already initialized
+}
 
+export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId); /* CRITICAL: The app will break without this line */
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
-// 2. Validate Connection to Firestore on Boot
-async function testConnection() {
-  try {
-    await getDocFromServer(doc(db, "test", "connection"));
-  } catch (error) {
-    if (error instanceof Error && error.message.includes("the client is offline")) {
-      console.warn("Please check your Firebase configuration: client is offline.");
-    }
-  }
-}
-if (typeof window !== "undefined") {
-  void testConnection();
-}
-
-// 3. Error Handling Architecture
+// 2. Error Handling Architecture
 export enum OperationType {
   CREATE = "create",
   UPDATE = "update",
@@ -115,6 +92,9 @@ export function handleFirestoreError(
 // 4. Firebase Authentication Helpers
 export function getFriendlyAuthErrorMessage(error: unknown): string {
   const msg = error instanceof Error ? error.message : String(error);
+  if (msg.includes("auth/operation-not-allowed")) {
+    return "auth/operation-not-allowed: Email/Password sign-in method is not enabled in Firebase Console.";
+  }
   if (msg.includes("auth/invalid-credential") || msg.includes("auth/wrong-password") || msg.includes("auth/user-not-found")) {
     return "Incorrect email or password. Please try again.";
   }
@@ -409,6 +389,7 @@ export async function fetchPublicProfileFromFirestore(cleanUsername: string): Pr
       displayName: userData.displayName || userData.username,
       avatar: userData.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${cleanUsername}`,
       bio: userData.bio || "",
+      background: userData.background || { kind: "preset", value: "lava" },
       starCount: 0,
       isStarred: false,
       playlists: publicPlaylists,

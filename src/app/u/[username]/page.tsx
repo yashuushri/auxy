@@ -6,10 +6,49 @@ import Image from "next/image";
 import { Copy, Check, Star, Play, Pause, Music2, Share2, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { RoomBackground } from "@/components/room-background";
 import { useAuth } from "@/context/auth-context";
 import { usePlayer } from "@/context/player-context";
 import { fetchPublicProfileFromFirestore } from "@/lib/firebase";
-import type { PublicProfile } from "@/lib/types";
+import { getUser } from "@/lib/storage";
+import { DEFAULT_BACKGROUND } from "@/lib/backgrounds";
+import type { PublicProfile, Background, UserAccount, Track } from "@/lib/types";
+
+function convertUserToPublicProfile(u: UserAccount): PublicProfile {
+  const libraryMap = new Map<string, Track>();
+  (u.library || []).forEach((t) => {
+    if (t.id) libraryMap.set(t.id, t);
+  });
+
+  const publicPlaylists = (u.playlists || [])
+    .filter((p) => p.isPublic !== false)
+    .map((p) => {
+      const tracks = (p.trackIds || [])
+        .map((tid) => libraryMap.get(tid))
+        .filter((t): t is Track => !!t);
+
+      return {
+        id: p.id,
+        name: p.name,
+        description: p.description || "",
+        cover: p.cover || tracks[0]?.cover,
+        trackCount: tracks.length,
+        tracks,
+      };
+    });
+
+  return {
+    id: u.id || u.username,
+    username: u.username,
+    displayName: u.displayName || u.username,
+    avatar: u.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${u.username}`,
+    bio: u.bio || "",
+    background: u.background || DEFAULT_BACKGROUND,
+    starCount: 0,
+    isStarred: false,
+    playlists: publicPlaylists,
+  };
+}
 
 export default function PublicProfilePage({
   params,
@@ -17,8 +56,11 @@ export default function PublicProfilePage({
   params: Promise<{ username: string }>;
 }) {
   const { username } = use(params);
+  const cleanUsername = (username || "").trim().toLowerCase();
   const { user } = useAuth();
   const { currentTrack, isPlaying, playTrack, togglePlay, addTracks, setActivePlaylist } = usePlayer();
+
+  const isOwner = !!user && user.username.toLowerCase() === cleanUsername;
 
   const [profile, setProfile] = useState<PublicProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -27,47 +69,86 @@ export default function PublicProfilePage({
   const [starCount, setStarCount] = useState(0);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
 
+  // Real-time synchronization when owner edits their pfp, bio, or background in their room
+  useEffect(() => {
+    if (isOwner && user) {
+      const live = convertUserToPublicProfile(user);
+      setProfile((prev) => ({
+        ...live,
+        starCount: prev?.starCount ?? 0,
+        isStarred: prev?.isStarred ?? false,
+      }));
+      if (live.playlists.length > 0 && !selectedPlaylistId) {
+        setSelectedPlaylistId(live.playlists[0].id);
+      }
+      setLoading(false);
+    }
+  }, [isOwner, user, selectedPlaylistId]);
+
+  // Initial load & Firestore remote synchronization
   useEffect(() => {
     let cancelled = false;
+
     async function load() {
-      try {
-        const cleanUser = username.trim().toLowerCase();
-        // 1. Try Firestore direct client fetch
-        const firestoreProfile = await fetchPublicProfileFromFirestore(cleanUser);
-        if (firestoreProfile && !cancelled) {
-          setProfile(firestoreProfile);
-          setStarCount(firestoreProfile.starCount);
-          setIsStarred(firestoreProfile.isStarred);
-          if (firestoreProfile.playlists?.length > 0) {
-            setSelectedPlaylistId(firestoreProfile.playlists[0].id);
+      if (!cleanUsername) return;
+
+      // 1. Instant local cache lookup
+      if (isOwner && user) {
+        const liveProfile = convertUserToPublicProfile(user);
+        if (!cancelled) {
+          setProfile(liveProfile);
+          if (liveProfile.playlists.length > 0 && !selectedPlaylistId) {
+            setSelectedPlaylistId(liveProfile.playlists[0].id);
           }
           setLoading(false);
-          return;
         }
+      } else {
+        const localUser = getUser(cleanUsername);
+        if (localUser && !cancelled) {
+          const cachedProfile = convertUserToPublicProfile(localUser);
+          setProfile(cachedProfile);
+          if (cachedProfile.playlists.length > 0 && !selectedPlaylistId) {
+            setSelectedPlaylistId(cachedProfile.playlists[0].id);
+          }
+          setLoading(false);
+        }
+      }
 
-        // 2. Fallback to API route
-        const res = await fetch(`/api/u/${encodeURIComponent(username)}`);
-        if (!res.ok) throw new Error("Profile not found");
-        const data = await res.json();
-        if (!cancelled && data.profile) {
-          setProfile(data.profile);
-          setStarCount(data.profile.starCount);
-          setIsStarred(data.profile.isStarred);
-          if (data.profile.playlists?.length > 0) {
-            setSelectedPlaylistId(data.profile.playlists[0].id);
+      // 2. Fetch from Firestore for cloud sync (stars, playlists, bio)
+      try {
+        const firestoreProfile = await fetchPublicProfileFromFirestore(cleanUsername);
+        if (firestoreProfile && !cancelled) {
+          setProfile((current) => {
+            if (!current) return firestoreProfile;
+            return {
+              ...firestoreProfile,
+              // If local/live state has custom edits, prefer them
+              displayName: current.displayName || firestoreProfile.displayName,
+              avatar: current.avatar || firestoreProfile.avatar,
+              bio: current.bio !== undefined && current.bio !== "" ? current.bio : firestoreProfile.bio,
+              background: current.background || firestoreProfile.background,
+              starCount: firestoreProfile.starCount,
+              isStarred: firestoreProfile.isStarred,
+            };
+          });
+          setIsStarred(firestoreProfile.isStarred);
+          setStarCount(firestoreProfile.starCount);
+          if (firestoreProfile.playlists?.length > 0 && !selectedPlaylistId) {
+            setSelectedPlaylistId(firestoreProfile.playlists[0].id);
           }
         }
-      } catch {
-        if (!cancelled) setProfile(null);
+      } catch (err) {
+        console.warn("Firestore profile fetch error:", err);
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
+
     load();
     return () => {
       cancelled = true;
     };
-  }, [username]);
+  }, [cleanUsername, isOwner, user, selectedPlaylistId]);
 
   function copyProfileUrl() {
     if (typeof window !== "undefined") {
@@ -143,12 +224,18 @@ export default function PublicProfilePage({
     );
   }
 
-  const isOwner = user?.username?.toLowerCase() === profile.username.toLowerCase();
+  const effectiveBackground: Background =
+    (isOwner && user?.background)
+      ? user.background
+      : (profile.background || DEFAULT_BACKGROUND);
 
   return (
-    <div className="page-in min-h-svh bg-[#08080c] text-white selection:bg-white/20">
+    <div className="page-in relative min-h-svh text-white selection:bg-white/20">
+      {/* Dynamic Room Background synced from user profile */}
+      <RoomBackground background={effectiveBackground} />
+
       {/* Top minimal navigation bar */}
-      <header className="sticky top-0 z-40 flex h-14 items-center justify-between border-b border-white/5 bg-[#08080c]/80 px-6 backdrop-blur-md">
+      <header className="sticky top-0 z-40 flex h-14 items-center justify-between border-b border-white/10 bg-black/40 px-6 backdrop-blur-md">
         <Link href="/" className="flex items-center gap-2.5 text-sm font-medium text-white/90 hover:text-white transition-colors">
           <div className="relative size-5 overflow-hidden rounded-md">
             <Image
@@ -166,7 +253,7 @@ export default function PublicProfilePage({
         <div className="flex items-center gap-2">
           {isOwner ? (
             <Link href="/">
-              <Button size="sm" variant="outline" className="border-white/20 bg-white/5 text-white hover:bg-white/10">
+              <Button size="sm" variant="outline" className="border-white/20 bg-black/50 text-white hover:bg-white/10 backdrop-blur-sm">
                 My Room
               </Button>
             </Link>
@@ -175,7 +262,7 @@ export default function PublicProfilePage({
               size="sm"
               variant="outline"
               onClick={copyProfileUrl}
-              className="border-white/15 bg-white/5 text-xs text-neutral-300 hover:bg-white/10 hover:text-white"
+              className="border-white/15 bg-black/50 text-xs text-neutral-300 hover:bg-white/10 hover:text-white backdrop-blur-sm"
             >
               {copied ? <Check className="mr-1.5 size-3.5 text-emerald-400" /> : <Copy className="mr-1.5 size-3.5" />}
               {copied ? "Copied" : "Share Profile"}
@@ -185,8 +272,8 @@ export default function PublicProfilePage({
       </header>
 
       {/* Profile Header Card */}
-      <main className="mx-auto max-w-4xl px-4 py-10 sm:px-6">
-        <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] p-6 backdrop-blur-xl sm:p-8">
+      <main className="relative z-10 mx-auto max-w-4xl px-4 py-10 sm:px-6">
+        <div className="relative overflow-hidden rounded-2xl border border-white/15 bg-black/50 p-6 backdrop-blur-xl sm:p-8 shadow-2xl shadow-black/60">
           <div className="flex flex-col items-center sm:flex-row sm:items-start gap-6">
             {/* Avatar */}
             <div className="relative size-24 shrink-0 overflow-hidden rounded-full border-2 border-white/20 shadow-2xl bg-neutral-900">
@@ -213,7 +300,7 @@ export default function PublicProfilePage({
                     size="sm"
                     variant="outline"
                     onClick={handleToggleStar}
-                    className={`border-white/15 transition-all ${
+                    className={`border-white/15 transition-all backdrop-blur-sm ${
                       isStarred
                         ? "bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30"
                         : "bg-white/5 text-neutral-200 hover:bg-white/10"
@@ -228,7 +315,7 @@ export default function PublicProfilePage({
                     variant="outline"
                     onClick={copyProfileUrl}
                     title="Copy Profile URL"
-                    className="border-white/15 bg-white/5 text-neutral-300 hover:bg-white/10 hover:text-white"
+                    className="border-white/15 bg-white/5 text-neutral-300 hover:bg-white/10 hover:text-white backdrop-blur-sm"
                   >
                     {copied ? <Check className="size-4 text-emerald-400" /> : <Share2 className="size-4" />}
                   </Button>
@@ -261,17 +348,17 @@ export default function PublicProfilePage({
         {/* Public Playlists Section */}
         <div className="mt-8">
           <div className="flex items-center justify-between pb-4">
-            <h2 className="text-lg font-semibold tracking-tight text-white">Public Playlists</h2>
+            <h2 className="text-lg font-semibold tracking-tight text-white drop-shadow-sm">Public Playlists</h2>
           </div>
 
           {profile.playlists.length === 0 ? (
-            <div className="rounded-xl border border-white/5 bg-white/[0.02] p-8 text-center text-neutral-400">
+            <div className="rounded-xl border border-white/10 bg-black/40 p-8 text-center text-neutral-400 backdrop-blur-md">
               <p className="text-sm">No public playlists shared yet.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
               {/* Playlists sidebar / selector */}
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-2 max-h-[385px] overflow-y-auto pr-1.5 slim-transparent-scrollbar">
                 {profile.playlists.map((pl) => {
                   const isSelected = selectedPlaylist?.id === pl.id;
                   return (
@@ -279,10 +366,10 @@ export default function PublicProfilePage({
                       key={pl.id}
                       type="button"
                       onClick={() => setSelectedPlaylistId(pl.id)}
-                      className={`flex items-center gap-3 rounded-xl border p-3 text-left transition-all ${
+                      className={`flex items-center gap-3 rounded-xl border p-3 text-left transition-all backdrop-blur-md ${
                         isSelected
-                          ? "border-white/25 bg-white/10 shadow-lg shadow-black/40"
-                          : "border-white/5 bg-white/[0.02] hover:border-white/15 hover:bg-white/[0.05]"
+                          ? "border-white/30 bg-black/70 shadow-lg shadow-black/50"
+                          : "border-white/10 bg-black/40 hover:border-white/20 hover:bg-black/55"
                       }`}
                     >
                       <div className="size-12 shrink-0 overflow-hidden rounded-lg bg-neutral-900 border border-white/10">
@@ -306,10 +393,15 @@ export default function PublicProfilePage({
 
               {/* Selected Playlist Track List */}
               {selectedPlaylist && (
-                <div className="col-span-1 md:col-span-2 rounded-2xl border border-white/10 bg-white/[0.02] p-5">
-                  <div className="flex items-center justify-between pb-4 border-b border-white/5">
+                <div className="col-span-1 md:col-span-2 flex flex-col rounded-2xl border border-white/15 bg-black/50 p-5 backdrop-blur-xl shadow-xl shadow-black/50">
+                  <div className="flex items-center justify-between pb-4 border-b border-white/10 shrink-0">
                     <div>
-                      <h3 className="text-base font-semibold text-white">{selectedPlaylist.name}</h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-base font-semibold text-white">{selectedPlaylist.name}</h3>
+                        <span className="rounded-full bg-white/10 px-2 py-0.5 text-[11px] text-neutral-300">
+                          {selectedPlaylist.tracks.length} {selectedPlaylist.tracks.length === 1 ? "track" : "tracks"}
+                        </span>
+                      </div>
                       {selectedPlaylist.description && (
                         <p className="text-xs text-neutral-400 mt-0.5">{selectedPlaylist.description}</p>
                       )}
@@ -318,7 +410,7 @@ export default function PublicProfilePage({
                       <Button
                         size="sm"
                         onClick={() => playPlaylist(selectedPlaylist, 0)}
-                        className="bg-white text-neutral-950 hover:bg-neutral-200"
+                        className="bg-white text-neutral-950 hover:bg-neutral-200 shadow-md cursor-pointer"
                       >
                         <Play className="mr-1.5 size-3.5 fill-current" />
                         Play All
@@ -326,8 +418,8 @@ export default function PublicProfilePage({
                     )}
                   </div>
 
-                  {/* Track rows */}
-                  <div className="mt-3 flex flex-col divide-y divide-white/5">
+                  {/* Track rows (scrollable container showing exactly 7 items before scroll) */}
+                  <div className="mt-3 flex flex-col divide-y divide-white/5 max-h-[385px] overflow-y-auto pr-1.5 slim-transparent-scrollbar">
                     {selectedPlaylist.tracks.length === 0 ? (
                       <p className="py-6 text-center text-xs text-neutral-500">No tracks in this playlist.</p>
                     ) : (
@@ -336,10 +428,10 @@ export default function PublicProfilePage({
                         return (
                           <div
                             key={track.id || idx}
-                            className="group flex items-center justify-between py-2.5 px-2 rounded-lg hover:bg-white/[0.04] transition-colors"
+                            className="group flex items-center justify-between py-2.5 px-2 rounded-lg hover:bg-white/[0.08] transition-colors"
                           >
                             <div className="flex items-center gap-3 min-w-0 flex-1">
-                              <span className="w-5 text-center text-xs text-neutral-500">{idx + 1}</span>
+                              <span className="w-5 text-center text-xs text-neutral-400">{idx + 1}</span>
                               <div className="relative size-10 shrink-0 overflow-hidden rounded-md bg-neutral-900 border border-white/10">
                                 {/* eslint-disable-next-line @next/next/no-img-element */}
                                 <img

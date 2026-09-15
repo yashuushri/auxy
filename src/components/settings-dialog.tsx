@@ -205,23 +205,24 @@ export function SettingsDialog({
           Photos save instantly. A looping video is larger, so a percent will show while it copies to your account.
         </p>
 
-        {/* 5 Presets Row: Midnight, Forest, Ember, Ocean, Violet */}
+        {/* 5 Animated Liquid Background Presets */}
         <div className="grid grid-cols-5 gap-2.5 mb-4">
           {ROOM_PRESETS.map((preset) => {
             const active =
-              user.background.kind === "preset" && user.background.value === preset.value;
+              user.background.kind === "preset" &&
+              (user.background.value === preset.id || user.background.value === preset.value);
             return (
               <div key={preset.id} className="flex flex-col items-center">
                 <button
                   type="button"
-                  onClick={() => setBackground({ kind: "preset", value: preset.value })}
+                  onClick={() => setBackground({ kind: "preset", value: preset.id })}
                   title={preset.name}
-                  className={`w-full h-11 rounded-xl transition-all cursor-pointer hover:scale-[1.03] active:scale-[0.98] ${
-                    active ? "ring-2 ring-black ring-offset-2 scale-[1.02]" : "ring-1 ring-black/10"
+                  className={`w-full h-11 rounded-xl transition-all cursor-pointer hover:scale-[1.04] active:scale-[0.98] ${
+                    active ? "ring-2 ring-black ring-offset-2 scale-[1.02] shadow-sm" : "ring-1 ring-black/10"
                   }`}
-                  style={{ background: preset.value }}
+                  style={{ background: preset.preview }}
                 />
-                <span className="text-xs text-neutral-600 font-medium mt-1.5 text-center truncate w-full">
+                <span className="text-[11px] text-neutral-600 font-medium mt-1.5 text-center truncate w-full">
                   {preset.name}
                 </span>
               </div>

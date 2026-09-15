@@ -37,15 +37,66 @@ export function getUser(username: string) {
   return readUsers()[usernameKey(username)] ?? null;
 }
 
-export function saveUser(user: UserAccount) {
+export function isUsernameTaken(username: string): boolean {
+  const clean = usernameKey(username);
   const users = readUsers();
-  users[usernameKey(user.username)] = user;
-  writeUsers(users);
-  return user;
+  return !!users[clean];
 }
 
-export function isValidUsername(username: string) {
-  return /^[a-zA-Z0-9._]{2,32}$/.test(username.trim());
+export function isEmailTaken(email: string): boolean {
+  const cleanEmail = email.trim().toLowerCase();
+  const users = readUsers();
+  return Object.values(users).some(
+    (u) => u.email?.toLowerCase() === cleanEmail
+  );
+}
+
+export function getUserByEmailOrUsername(identifier: string): UserAccount | null {
+  if (!identifier) return null;
+  const clean = identifier.trim().toLowerCase();
+  const users = readUsers();
+  if (users[clean]) return users[clean];
+  const found = Object.values(users).find(
+    (u) =>
+      u.username?.toLowerCase() === clean ||
+      u.email?.toLowerCase() === clean ||
+      u.displayName?.toLowerCase() === clean ||
+      usernameKey(u.username) === clean
+  );
+  return found || null;
+}
+
+export function saveUser(user: UserAccount) {
+  if (!user || !user.username) return user;
+  const users = readUsers();
+  const key = usernameKey(user.username);
+  const existing = users[key];
+  
+  // Merge cleanly to ensure no accidental loss of playlists/library/background
+  const merged: UserAccount = {
+    ...existing,
+    ...user,
+    playlists: user.playlists ?? existing?.playlists ?? [],
+    library: user.library ?? existing?.library ?? [],
+    background: user.background ?? existing?.background ?? { kind: "preset", value: "#0b0b12" },
+  };
+
+  users[key] = merged;
+  writeUsers(users);
+  return merged;
+}
+
+export function isValidUsername(username: string): boolean {
+  // STRICT: only letters (a-z, A-Z) and numbers (0-9). NO symbols (- _ + . etc), NO spaces.
+  const trimmed = username.trim();
+  return /^[a-zA-Z0-9]{2,32}$/.test(trimmed);
+}
+
+export function isValidDisplayName(displayName: string): boolean {
+  // Display name can have letters, numbers, and spaces. NO special characters/symbols (%$&@# etc.)
+  const trimmed = displayName.trim();
+  if (trimmed.length < 1 || trimmed.length > 32) return false;
+  return /^[a-zA-Z0-9 ]+$/.test(displayName);
 }
 
 export function avatarInitials(name: string) {

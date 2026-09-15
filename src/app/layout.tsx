@@ -15,10 +15,10 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Auxy",
-  description: "Auxy music room with Discord authentication and YouTube playlists.",
+  description: "Auxy music room with Firebase authentication, Firestore sync, and YouTube playlists.",
   openGraph: {
     title: "Auxy",
-    description: "Auxy music room with Discord authentication and YouTube playlists.",
+    description: "Auxy music room with Firebase authentication, Firestore sync, and YouTube playlists.",
   },
   icons: {
     icon: "/logo.png",
@@ -33,7 +33,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} ${geistMono.variable} dark h-full antialiased`}
       suppressHydrationWarning
     >
-      <body className="min-h-full flex flex-col">
+      <body className="min-h-full flex flex-col" suppressHydrationWarning>
         <Providers>{children}</Providers>
       </body>
     </html>

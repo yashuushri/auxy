@@ -46,6 +46,9 @@ export type UserAccount = {
   discordId?: string;
   username: string;
   displayName: string;
+  email?: string;
+  emailVerified?: boolean;
+  password?: string;
   avatar: string;
   bio?: string;
   background: Background;
@@ -72,6 +75,7 @@ export type PublicProfile = {
   displayName: string;
   avatar: string;
   bio: string;
+  background?: Background;
   starCount: number;
   isStarred: boolean;
   playlists: {

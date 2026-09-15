@@ -2,7 +2,13 @@
 
 import { useEffect, useState } from "react";
 import Image from "next/image";
-import { LogOut, Settings2, UserRound } from "lucide-react";
+import { LogOut, Settings2, UserRound, Menu } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { EditPanel } from "@/components/edit-panel";
 import { FloatingWindow } from "@/components/floating-window";
 import { RoomBackground } from "@/components/room-background";
@@ -104,10 +110,20 @@ export function DesktopHome() {
           <Button size="sm" variant="outline" className={overlayBtn} onClick={() => setRoomOpen(true)}>
             Room
           </Button>
-          <Button size="sm" variant="outline" className={overlayBtn} onClick={logout}>
-            <LogOut data-icon="inline-start" />
-            Log out
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="outline" className={overlayBtn}>
+                <Menu data-icon="inline-start" className="size-4" />
+                Menu
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={logout}>
+                <LogOut className="mr-2 size-4" />
+                <span>Log out</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 

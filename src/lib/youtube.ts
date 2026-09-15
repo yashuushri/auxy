@@ -110,12 +110,77 @@ export function parseIsoDuration(duration: string): number {
 }
 
 /**
+ * Extracts the single primary creator/channel name and avoids multiple collaborator clutter.
+ * e.g. "Ravi Kumar, Neha Kakkar & Badshah" -> "Ravi Kumar"
+ * e.g. "DIVINE feat. Naezy" -> "DIVINE"
+ * e.g. "LuisFonsiVEVO" -> "Luis Fonsi"
+ */
+export function getPrimaryArtist(rawArtist?: string | null): string {
+  if (!rawArtist) return "YouTube";
+  let clean = rawArtist.trim();
+
+  // Remove common channel suffixes
+  clean = clean
+    .replace(/ - Topic$/i, "")
+    .replace(/VEVO$/i, "")
+    .replace(/ Official$/i, "")
+    .replace(/ Records$/i, "")
+    .trim();
+
+  // Pick only the first/primary creator if multiple collaborators are listed
+  const collaboratorsRegex = /[,&/]|(?:\s+(?:feat\.?|ft\.?|featuring|with|x|vs\.?)\s+)/i;
+  const parts = clean.split(collaboratorsRegex);
+  const primary = parts[0]?.trim();
+
+  return primary || clean || "YouTube";
+}
+
+/**
+ * Formats artist tag with clean primary artist and platform
+ * e.g. "Ravi Kumar · YouTube"
+ */
+export function formatArtistWithPlatform(rawArtist?: string | null): string {
+  const primary = getPrimaryArtist(rawArtist);
+  if (!primary || primary.toLowerCase() === "youtube") {
+    return "YouTube";
+  }
+  if (primary.toLowerCase().endsWith("· youtube")) {
+    return primary;
+  }
+  return `${primary} · YouTube`;
+}
+
+/**
+ * Generates playlist name from the first song's title
+ * e.g. "Farak | DIVINE" -> "Farak's Playlist"
+ * e.g. "Kesariya (Audio)" -> "Kesariya's Playlist"
+ * e.g. "Despacito ft. Daddy Yankee" -> "Despacito's Playlist"
+ */
+export function generatePlaylistNameFromSong(rawTitle?: string | null): string {
+  if (!rawTitle) return "YouTube Playlist";
+  const { title } = cleanYouTubeTitle(rawTitle);
+  const clean = (title || rawTitle).trim();
+
+  // Extract first word/token
+  const words = clean
+    .replace(/^[^a-zA-Z0-9\u0900-\u097F]+/, "") // remove leading non-alphanumeric
+    .split(/[\s\-–—|_()[\]{}.,:;!?'"\/]+/);
+  
+  const firstWord = words.find((w) => w.length > 0);
+  if (!firstWord) return "YouTube Playlist";
+
+  const formatted = firstWord.charAt(0).toUpperCase() + firstWord.slice(1);
+  return `${formatted}'s Playlist`;
+}
+
+/**
  * Clean track title and artist from YouTube video title
  * e.g. "Artist - Song Title (Official Music Video)" -> Artist, Song Title
+ * e.g. "Farak | DIVINE | Gully Gang" -> Title: "Farak", Artist: "DIVINE"
  */
 export function cleanYouTubeTitle(rawTitle: string): { title: string; artist: string } {
   const cleaned = rawTitle
-    .replace(/\s*[\(\[](?:Official\s+(?:Music\s+)?Video|Audio|Lyric\s+Video|Visualizer|HD|HQ|4K|MV|Official)[\)\]]/gi, "")
+    .replace(/\s*[\(\[](?:Official\s+(?:Music\s+)?Video|Audio|Lyric\s+Video|Visualizer|HD|HQ|4K|MV|Official|Full\s+Song|Remix)[\)\]]/gi, "")
     .replace(/\s*\|\s*Official\s+Music\s+Video/gi, "")
     .trim();
 
@@ -125,7 +190,17 @@ export function cleanYouTubeTitle(rawTitle: string): { title: string; artist: st
     const artist = parts[0].trim();
     const title = parts.slice(1).join(" - ").trim();
     if (artist && title) {
-      return { artist, title };
+      return { artist: getPrimaryArtist(artist), title };
+    }
+  }
+
+  // Check for "Title | Artist"
+  if (cleaned.includes(" | ")) {
+    const parts = cleaned.split(" | ");
+    const title = parts[0].trim();
+    const artist = parts[1]?.trim() || "YouTube";
+    if (title) {
+      return { artist: getPrimaryArtist(artist), title };
     }
   }
 
@@ -135,7 +210,7 @@ export function cleanYouTubeTitle(rawTitle: string): { title: string; artist: st
     const artist = parts[0].trim();
     const title = parts.slice(1).join(": ").trim();
     if (artist && title) {
-      return { artist, title };
+      return { artist: getPrimaryArtist(artist), title };
     }
   }
 
@@ -156,7 +231,8 @@ export function createTrackFromYouTube(item: {
   thumbnailUrl?: string;
 }): Track {
   const { title, artist } = cleanYouTubeTitle(item.title);
-  const finalArtist = item.artist?.trim() || artist;
+  const primaryArtist = getPrimaryArtist(item.artist || artist);
+  const formattedArtist = formatArtistWithPlatform(primaryArtist);
   const cover =
     item.thumbnailUrl ||
     `https://img.youtube.com/vi/${item.videoId}/hqdefault.jpg`;
@@ -165,7 +241,7 @@ export function createTrackFromYouTube(item: {
     id: `yt-${item.videoId}`,
     youtubeId: item.videoId,
     title: item.title ? title : `Track ${item.videoId}`,
-    artist: finalArtist,
+    artist: formattedArtist,
     album: "YouTube",
     cover,
     duration: item.duration || 0,

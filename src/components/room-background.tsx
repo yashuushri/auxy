@@ -1,12 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { backgroundCss } from "@/lib/backgrounds";
+import { backgroundCss, getPresetById, DEFAULT_BACKGROUND } from "@/lib/backgrounds";
 import { getStoredVideoUrl } from "@/lib/video-db";
-import type { UserAccount } from "@/lib/types";
+import { AnimatedLiquidBackground } from "@/components/animated-liquid-background";
+import type { Background, UserAccount } from "@/lib/types";
 
-export function RoomBackground({ user }: { user: UserAccount }) {
-  const bg = user.background;
+export function RoomBackground({
+  user,
+  background,
+}: {
+  user?: UserAccount | null;
+  background?: Background | null;
+}) {
+  const bg = background || user?.background || DEFAULT_BACKGROUND;
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
   const [videoLoaded, setVideoLoaded] = useState(false);
 
@@ -33,20 +40,31 @@ export function RoomBackground({ user }: { user: UserAccount }) {
     };
   }, [bg.kind, bg.value]);
 
+  const isPreset = bg.kind === "preset";
+  const activePreset = isPreset ? getPresetById(bg.value) : null;
+
   return (
     <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden select-none bg-[#09090f]">
-      {/* 1. Base ambient atmosphere */}
-      <div
-        className="absolute inset-0 transition-opacity duration-700 ease-out"
-        style={{
-          background:
-            bg.kind === "preset" || bg.kind === "color"
-              ? backgroundCss(bg.value)
-              : "linear-gradient(160deg, #0b0b12 0%, #1b1230 48%, #0d1b2a 100%)",
-        }}
-      />
+      {/* 1. Live Animated Liquid Shader for Presets */}
+      {isPreset && activePreset && (
+        <AnimatedLiquidBackground
+          key={`liquid-bg-${activePreset.id}`}
+          presetId={activePreset.id}
+          className="transition-opacity duration-700 ease-out"
+        />
+      )}
 
-      {/* 2. Custom Image Backgrounds (URL or Upload) */}
+      {/* 2. Color / Legacy gradient atmosphere */}
+      {bg.kind === "color" && (
+        <div
+          className="absolute inset-0 transition-opacity duration-700 ease-out"
+          style={{
+            background: backgroundCss(bg.value),
+          }}
+        />
+      )}
+
+      {/* 3. Custom Image Backgrounds (URL or Upload) */}
       {(bg.kind === "url" || bg.kind === "upload") && (
         <div
           className="absolute inset-0 transition-opacity duration-700 ease-out"
@@ -56,7 +74,7 @@ export function RoomBackground({ user }: { user: UserAccount }) {
         />
       )}
 
-      {/* 3. Looping Video (.mp4 / .webm) */}
+      {/* 4. Looping Video (.mp4 / .webm) */}
       {bg.kind === "video" && videoSrc && (
         <div className="absolute inset-0 overflow-hidden">
           <video
@@ -75,9 +93,8 @@ export function RoomBackground({ user }: { user: UserAccount }) {
         </div>
       )}
 
-      {/* 4. Subtle Vignette */}
-      <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/50 pointer-events-none" />
-      <div className="absolute inset-0 bg-black/15 backdrop-blur-[0.5px] pointer-events-none" />
+      {/* 5. Minimal edge vignette for readability without any blur */}
+      <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/30 pointer-events-none" />
     </div>
   );
 }

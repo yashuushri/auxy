@@ -23,9 +23,6 @@ import {
   Trash2,
   Volume2,
   VolumeX,
-  Video,
-  ListMusic,
-  ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -192,7 +189,6 @@ export function SpotifyWindow() {
     seek,
     addCustomTrack,
     saveYouTubePlaylist,
-    playYouTubePlaylist,
     deletePlaylist,
     addTracks,
     moveTrack,
@@ -219,9 +215,8 @@ export function SpotifyWindow() {
 
   const liked = playlists.find((playlist) => playlist.id === "liked" || playlist.id === "favorites");
   const activePlaylist = playlists.find((p) => p.id === activePlaylistId) ?? playlists[0];
-  const isYouTubePlaylist = activePlaylist?.type === "youtube";
-  const emptyList = !isYouTubePlaylist && !tracks.length;
-  const heroCover = currentTrack?.cover || user?.avatar;
+  const emptyList = !tracks.length;
+  const heroCover = currentTrack?.cover || activePlaylist?.cover || user?.avatar;
   const muted = volume === 0;
   const compact = useWindowCompact();
   useHugWindowContent(emptyList);
@@ -468,43 +463,7 @@ export function SpotifyWindow() {
             </div>
 
             <TabsContent value="songs" className={cn("flex min-h-0 flex-col overflow-hidden px-3 pt-2 pb-1", emptyList ? "flex-none" : "flex-1")}>
-              {isYouTubePlaylist ? (
-                <div className="flex flex-1 flex-col items-center justify-center p-6 text-center">
-                  <div className="relative mb-3 flex size-16 items-center justify-center rounded-2xl bg-red-500/10 border border-red-500/20 text-red-400">
-                    <ListMusic className="size-8" />
-                  </div>
-                  <h3 className="text-sm font-semibold text-white">{activePlaylist.name}</h3>
-                  <p className="mt-1 max-w-xs text-[11px] text-white/60">
-                    YouTube Playlist Reference · Plays sequentially via official YouTube embedded player
-                  </p>
-                  {currentTrack && (
-                    <div className="mt-3 rounded-lg bg-white/5 border border-white/10 px-3 py-1.5 text-xs text-white/90 max-w-xs truncate">
-                      <span className="text-white/50 mr-1.5 font-mono">Now Playing:</span>
-                      <span className="font-medium">{currentTrack.title}</span>
-                    </div>
-                  )}
-                  <div className="mt-4 flex items-center gap-2">
-                    <Button
-                      onClick={() => playYouTubePlaylist(activePlaylist.id)}
-                      className="bg-white text-black hover:bg-white/90 text-xs gap-1.5 h-8 px-4 font-medium"
-                    >
-                      {isPlaying ? <Pause className="size-3.5 fill-current" /> : <Play className="size-3.5 fill-current" />}
-                      {isPlaying ? "Pause Playlist" : "Play Playlist"}
-                    </Button>
-                    {activePlaylist.youtubePlaylistId && (
-                      <a
-                        href={`https://www.youtube.com/playlist?list=${activePlaylist.youtubePlaylistId}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 text-xs text-white/60 hover:text-white border border-white/10 rounded-md px-3 h-8 bg-white/5 transition-colors"
-                      >
-                        <ExternalLink className="size-3" />
-                        YouTube
-                      </a>
-                    )}
-                  </div>
-                </div>
-              ) : emptyList ? (
+              {emptyList ? (
                 <button
                   type="button"
                   onClick={() => setShowAdd(true)}
@@ -597,22 +556,17 @@ export function SpotifyWindow() {
                         onClick={() => {
                           setActivePlaylist(playlist.id);
                           setTab("songs");
-                          if (playlist.type === "youtube") {
-                            playYouTubePlaylist(playlist.id);
+                          if (playlist.trackIds.length > 0) {
+                            playTrack(0, playlist.id);
                           }
                         }}
                         className="flex-1 text-left min-w-0 flex items-center gap-2"
                       >
                         <span className="text-xs truncate">{playlist.name}</span>
-                        {playlist.type === "youtube" && (
-                          <span className="rounded bg-red-500/20 px-1.5 py-0.5 text-[9px] font-semibold text-red-300 uppercase tracking-wide">
-                            YouTube
-                          </span>
-                        )}
                       </button>
                       <div className="flex items-center gap-2 shrink-0">
                         <span className="text-[11px] text-white/50">
-                          {playlist.type === "youtube" ? "Playlist" : `${playlist.trackIds.length} tracks`}
+                          {`${playlist.trackIds.length} tracks`}
                         </span>
                         {playlist.id !== "favorites" && playlist.id !== "liked" && (
                           <button
@@ -665,12 +619,11 @@ export function SpotifyWindow() {
       <Dialog open={showAdd} onOpenChange={setShowAdd}>
         <DialogContent className="bg-[#14141c] text-white border-white/10 sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-base">
-              <Video className="size-4 text-red-500" />
+            <DialogTitle className="text-base font-semibold text-white">
               Add YouTube Music or Playlist
             </DialogTitle>
             <DialogDescription className="text-xs text-neutral-400">
-              Paste any YouTube video link OR full YouTube playlist URL.
+              Paste any YouTube video link or full YouTube playlist URL.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleAddSong} className="flex flex-col gap-3">
@@ -678,13 +631,13 @@ export function SpotifyWindow() {
               <div className="flex items-center justify-between">
                 <Label className="text-xs text-neutral-300">YouTube URL</Label>
                 {detectedType === "video" && (
-                  <span className="inline-flex items-center gap-1 rounded bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-400 border border-emerald-500/20">
-                    <Video className="size-3" /> Video detected
+                  <span className="rounded bg-white/10 px-2 py-0.5 text-[11px] font-medium text-neutral-300 border border-white/10">
+                    Video detected
                   </span>
                 )}
                 {detectedType === "playlist" && (
-                  <span className="inline-flex items-center gap-1 rounded bg-blue-500/15 px-2 py-0.5 text-[11px] font-medium text-blue-400 border border-blue-500/20">
-                    <ListMusic className="size-3" /> Playlist detected
+                  <span className="rounded bg-white/10 px-2 py-0.5 text-[11px] font-medium text-neutral-300 border border-white/10">
+                    Playlist detected
                   </span>
                 )}
               </div>
@@ -696,29 +649,20 @@ export function SpotifyWindow() {
                 onChange={(event) => setYtUrl(event.target.value)}
                 className="bg-white/5 border-white/10 text-white placeholder:text-neutral-500 text-xs"
               />
-              <p className="text-[11px] text-neutral-500">
+              <p className="text-[10px] text-white/35">
                 {detectedType === "playlist"
-                  ? "Saves YouTube playlist reference. Plays sequentially through the official YouTube player."
+                  ? "Imports all playlist songs into your library and playlist."
                   : detectedType === "video"
-                  ? "Adds song to your library and active playlist immediately."
-                  : "Paste any YouTube video or playlist URL. Auto-detects URL type."}
+                  ? "Adds song to your library and active playlist."
+                  : "Paste any YouTube song or playlist link."}
               </p>
             </div>
             <div className="flex flex-col gap-1.5">
               <Label className="text-xs text-neutral-300">Custom Title (optional)</Label>
               <Input
-                placeholder="Leave blank to auto-detect from YouTube"
+                placeholder="Leave blank to auto-detect title from YouTube"
                 value={customTitle}
                 onChange={(event) => setCustomTitle(event.target.value)}
-                className="bg-white/5 border-white/10 text-white placeholder:text-neutral-500 text-xs"
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label className="text-xs text-neutral-300">Artist Name (optional)</Label>
-              <Input
-                placeholder="Leave blank to auto-detect channel"
-                value={customArtist}
-                onChange={(event) => setCustomArtist(event.target.value)}
                 className="bg-white/5 border-white/10 text-white placeholder:text-neutral-500 text-xs"
               />
             </div>

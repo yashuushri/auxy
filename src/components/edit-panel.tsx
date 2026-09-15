@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { useAuth } from "@/context/auth-context";
 import { usePlayer } from "@/context/player-context";
 import { cn } from "@/lib/utils";
-import { avatarInitials } from "@/lib/storage";
+import { avatarInitials, isValidDisplayName } from "@/lib/storage";
 
 const MAX_AVATAR_BYTES = 2_000_000;
 
@@ -196,6 +196,10 @@ export function EditPanel() {
             className="bg-white text-black hover:bg-white/90 text-xs flex-1"
             onClick={() => {
               const name = displayName.trim() || user.username;
+              if (!isValidDisplayName(name)) {
+                toast.error("Display name can only contain letters, numbers, and spaces (no special characters like %$&@#).");
+                return;
+              }
               updateUser({ displayName: name, bio: bio.trim() });
               toast.success("Profile saved");
             }}
