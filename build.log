@@ -1,0 +1,45 @@
+
+> playlist@0.1.0 build
+> NODE_OPTIONS='--max-old-space-size=1536' next build
+
+⚠ You are using a non-standard "NODE_ENV" value in your environment. This creates inconsistencies in the project and is strongly advised against. Read more: https://nextjs.org/docs/messages/non-standard-node-env
+▲ Next.js 16.3.3 (Turbopack)
+✓ Running next.config.ts took 37ms
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 576ms
+  Running TypeScript ...
+  Finished TypeScript in 3.5s ...
+  Collecting page data using 1 worker ...
+  Generating static pages using 1 worker (0/14) ...
+  Generating static pages using 1 worker (3/14) 
+  Generating static pages using 1 worker (6/14) 
+Each child in a list should have a unique "key" prop.
+
+Check the top-level render call using <__next_viewport_boundary__>. See https://react.dev/link/warning-keys for more information.
+Each child in a list should have a unique "key" prop. See https://react.dev/link/warning-keys for more information.
+Each child in a list should have a unique "key" prop.
+
+Check the top-level render call using <meta>. See https://react.dev/link/warning-keys for more information.
+Each child in a list should have a unique "key" prop.
+
+Check the top-level render call using <head>. See https://react.dev/link/warning-keys for more information.
+Each child in a list should have a unique "key" prop.
+
+Check the top-level render call using <meta>. See https://react.dev/link/warning-keys for more information.
+Each child in a list should have a unique "key" prop.
+
+Check the top-level render call using <html>. See https://react.dev/link/warning-keys for more information.
+Each child in a list should have a unique "key" prop.
+
+Check the top-level render call using <meta>. See https://react.dev/link/warning-keys for more information.
+Each child in a list should have a unique "key" prop.
+
+Check the top-level render call using <head>. See https://react.dev/link/warning-keys for more information.
+Error occurred prerendering page "/_global-error". Read more: https://nextjs.org/docs/messages/prerender-error
+TypeError: Cannot read properties of null (reading 'useContext')
+    at ignore-listed frames {
+  digest: '1202712940'
+}
+Export encountered an error on /_global-error/page: /_global-error, exiting the build.
+⨯ Next.js build worker exited with code: 1 and signal: null

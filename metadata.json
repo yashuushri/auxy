@@ -1,6 +1,6 @@
 {
   "name": "Auxy",
-  "description": "Auxy music room with Firebase authentication, Firestore sync, and YouTube playlists.",
+  "description": "Auxy music room with Supabase Realtime synchronization, PostgreSQL persistence, and YouTube playlists.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

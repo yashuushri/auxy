@@ -47,25 +47,25 @@ export async function POST(req: NextRequest) {
       verified: false,
     });
 
-    const result = await sendOtpEmailViaBrevo({
-      toEmail: cleanEmail,
-      recipientName: username,
-      otp,
-    });
-
-    if (!result.success) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: result.error || "Failed to deliver email. Please try again.",
-        },
-        { status: 500 }
-      );
+    let emailDelivered = false;
+    try {
+      const result = await sendOtpEmailViaBrevo({
+        toEmail: cleanEmail,
+        recipientName: username,
+        otp,
+      });
+      emailDelivered = result.success;
+      if (!result.success) {
+        console.warn("Brevo resend email warning:", result.error);
+      }
+    } catch (deliveryError) {
+      console.warn("Brevo resend exception:", deliveryError);
     }
 
     return NextResponse.json({
       ok: true,
       message: "A new 4-digit verification code has been sent to your email.",
+      emailDelivered,
     });
   } catch (error) {
     console.error("resend-otp error:", error);

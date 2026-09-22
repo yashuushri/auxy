@@ -5,8 +5,9 @@ import { ArrowLeft, Loader2, RefreshCw, KeyRound, CheckCircle2, LockKeyhole } fr
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/auth-context";
-import { isUsernameTaken, isEmailTaken, getUserByEmailOrUsername, isValidUsername } from "@/lib/storage";
+import { isUsernameTaken, isEmailTaken, getUserByEmailOrUsername, isValidUsername, saveUser } from "@/lib/storage";
 import { validatePasswordStrength } from "@/lib/otp-store";
+import { fetchUserProfileFromSupabase } from "@/lib/supabase-db";
 
 interface AuthFormProps {
   mode?: "login" | "register" | "forgot";
@@ -197,17 +198,39 @@ export function AuthForm({
         return;
       }
 
-      const found = getUserByEmailOrUsername(cleanIdentifier);
-      const authEmail = found?.email || (cleanIdentifier.includes("@") ? cleanIdentifier.toLowerCase() : null);
-      const authUsername = found?.username || found?.displayName || cleanIdentifier;
-
-      if (!authEmail) {
-        setErrorMsg("No registered email address found for this account. Please enter your email address.");
-        return;
-      }
-
       setLoading(true);
       try {
+        let found = getUserByEmailOrUsername(cleanIdentifier);
+        if (!found) {
+          try {
+            const lookupRes = await fetch("/api/auth/lookup", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ identifier: cleanIdentifier }),
+            });
+            const lookupData = await lookupRes.json();
+            if (lookupData.ok && lookupData.found && lookupData.user) {
+              found = lookupData.user;
+              saveUser(lookupData.user);
+            }
+          } catch {}
+        }
+
+        if (!found) {
+          try {
+            found = await fetchUserProfileFromSupabase(cleanIdentifier);
+          } catch {}
+        }
+
+        const authEmail = found?.email || (cleanIdentifier.includes("@") ? cleanIdentifier.toLowerCase() : null);
+        const authUsername = found?.username || cleanIdentifier;
+
+        if (!authEmail) {
+          setErrorMsg("No account found with this identifier. Please enter your registered email address.");
+          setLoading(false);
+          return;
+        }
+
         const res = await fetch("/api/auth/send-otp", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -236,7 +259,7 @@ export function AuthForm({
         setLoading(false);
       }
     } else {
-      // Login Mode
+      // Login Mode: verify credentials & send 4-digit verification code
       const cleanIdentifier = loginIdentifier.trim();
       if (!cleanIdentifier) {
         setErrorMsg("Please enter your username or email.");
@@ -248,25 +271,63 @@ export function AuthForm({
         return;
       }
 
-      // Verify that the account actually exists before attempting login or OTP
-      const found = getUserByEmailOrUsername(cleanIdentifier);
-      if (!found) {
-        setErrorMsg("No account found with this username or email. Please check your credentials or create an account.");
-        return;
-      }
-
-      // Validate password if user has password recorded
-      if (found.password && found.password !== password) {
-        setErrorMsg("Incorrect password. Please try again or reset your password.");
-        return;
-      }
-
-      // Resolve destination email for OTP
-      const authEmail = found.email || (cleanIdentifier.includes("@") ? cleanIdentifier.toLowerCase() : `${found.username}@auxy.app`);
-      const authUsername = found.displayName || found.username;
-
       setLoading(true);
       try {
+        let found = getUserByEmailOrUsername(cleanIdentifier);
+        if (!found) {
+          try {
+            const lookupRes = await fetch("/api/auth/lookup", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ identifier: cleanIdentifier, password }),
+            });
+            const lookupData = await lookupRes.json();
+            if (lookupData.ok) {
+              if (lookupData.found && lookupData.user) {
+                found = lookupData.user;
+                saveUser(lookupData.user);
+                if (lookupData.passwordMatch === false) {
+                  setErrorMsg("Incorrect password. Please try again.");
+                  setLoading(false);
+                  return;
+                }
+              } else if (!lookupData.found) {
+                setErrorMsg("No account found with this username or email. Please check your credentials or register.");
+                setLoading(false);
+                return;
+              }
+            }
+          } catch {}
+        }
+
+        if (!found) {
+          try {
+            found = await fetchUserProfileFromSupabase(cleanIdentifier);
+          } catch {}
+        }
+
+        if (!found) {
+          setErrorMsg("No account found with this username or email. Please check your credentials or register.");
+          setLoading(false);
+          return;
+        }
+
+        // If user has a password recorded, check password match
+        if (found.password && found.password !== password) {
+          setErrorMsg("Incorrect password. Please try again.");
+          setLoading(false);
+          return;
+        }
+
+        const authEmail = found.email || (cleanIdentifier.includes("@") ? cleanIdentifier.toLowerCase() : "");
+        const authUsername = found.username || cleanIdentifier;
+
+        if (!authEmail) {
+          setErrorMsg("No registered email address found for this account.");
+          setLoading(false);
+          return;
+        }
+
         const res = await fetch("/api/auth/send-otp", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -285,7 +346,7 @@ export function AuthForm({
         }
 
         setTargetEmail(authEmail);
-        setTargetUsername(found.username || authUsername);
+        setTargetUsername(authUsername);
         setStep("otp");
         setCooldown(60);
         setSuccessMsg(`A 4-digit verification code was sent to ${authEmail}`);
@@ -522,44 +583,50 @@ export function AuthForm({
   const card = (
     <div
       id="auth-card"
-      className="w-full max-w-[420px] rounded-2xl border border-white/10 bg-[#121214]/90 p-6 sm:p-8 text-left text-white shadow-2xl backdrop-blur-2xl transition-all duration-300 ease-out"
+      className="w-full max-w-[305px] sm:max-w-[400px] rounded-xl sm:rounded-2xl border border-white/10 bg-[#121214]/90 p-3.5 sm:p-7 text-left text-white shadow-2xl backdrop-blur-2xl transition-all duration-300 ease-out"
     >
       {/* Back button */}
       <button
         type="button"
         id="auth-back-button"
         onClick={handleBack}
-        className="mb-4 inline-flex items-center gap-1.5 text-xs text-neutral-400 hover:text-white transition-colors cursor-pointer"
+        className="mb-1.5 sm:mb-4 inline-flex items-center gap-1.5 text-[10px] sm:text-xs text-neutral-400 hover:text-white transition-colors cursor-pointer"
       >
-        <ArrowLeft className="size-3.5" />
+        <ArrowLeft className="size-3 sm:size-3.5" />
         <span>Back</span>
       </button>
 
       {/* Header */}
       {step === "form" ? (
         <div key={`header-${activeMode}`} className="animate-in fade-in slide-in-from-bottom-2 duration-300">
-          <h2 className="text-2xl font-bold tracking-tight text-white">
+          <h2 className="text-lg sm:text-2xl font-bold tracking-tight text-white">
             {activeMode === "register"
-              ? "Sign up"
+              ? "Create account"
               : activeMode === "forgot"
               ? "Reset password"
               : "Sign in"}
           </h2>
-          <p className="mt-1 mb-6 text-xs text-neutral-400 leading-relaxed">
+          <p className="mt-0.5 mb-2.5 sm:mt-1 sm:mb-5 text-[10.5px] sm:text-xs text-neutral-400 leading-snug sm:leading-relaxed">
             {activeMode === "register"
-              ? "Create an Auxy account to customize your room, playlists, and player."
+              ? "Join Auxy to customize your room, playlists, and player."
               : activeMode === "forgot"
-              ? "Enter your email or username to receive a 4-digit password reset code."
+              ? "Enter your email or username to receive a 4-digit reset code."
               : "Sign in with your email or username to access your music room."}
           </p>
         </div>
       ) : step === "otp" ? (
         <div key="header-otp" className="animate-in fade-in slide-in-from-bottom-2 duration-300">
           <div className="flex items-center gap-2 mb-1">
-            <KeyRound className="size-5 text-neutral-300" />
-            <h2 className="text-xl font-bold tracking-tight text-white">Verify email</h2>
+            <KeyRound className="size-4 sm:size-5 text-neutral-300" />
+            <h2 className="text-base sm:text-xl font-bold tracking-tight text-white">
+              {activeMode === "forgot"
+                ? "Reset verification"
+                : activeMode === "register"
+                ? "Verify account"
+                : "Security verification"}
+            </h2>
           </div>
-          <p className="mt-1 mb-6 text-xs text-neutral-400 leading-relaxed">
+          <p className="mt-0.5 mb-2.5 sm:mt-1 sm:mb-5 text-[10.5px] sm:text-xs text-neutral-400 leading-snug sm:leading-relaxed">
             Enter the 4-digit verification code sent to{" "}
             <span className="text-neutral-200 font-medium">{targetEmail}</span>
           </p>
@@ -567,10 +634,10 @@ export function AuthForm({
       ) : (
         <div key="header-reset" className="animate-in fade-in slide-in-from-bottom-2 duration-300">
           <div className="flex items-center gap-2 mb-1">
-            <LockKeyhole className="size-5 text-neutral-300" />
-            <h2 className="text-xl font-bold tracking-tight text-white">Create new password</h2>
+            <LockKeyhole className="size-4 sm:size-5 text-neutral-300" />
+            <h2 className="text-base sm:text-xl font-bold tracking-tight text-white">Create new password</h2>
           </div>
-          <p className="mt-1 mb-6 text-xs text-neutral-400 leading-relaxed">
+          <p className="mt-0.5 mb-2.5 sm:mt-1 sm:mb-5 text-[10.5px] sm:text-xs text-neutral-400 leading-snug sm:leading-relaxed">
             Choose a new password for{" "}
             <span className="text-neutral-200 font-medium">{targetUsername || targetEmail}</span>
           </p>
@@ -579,28 +646,28 @@ export function AuthForm({
 
       {/* Success alert */}
       {successMsg && (
-        <div className="mb-4 flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-2.5 text-xs text-emerald-300 animate-in fade-in duration-200">
-          <CheckCircle2 className="size-4 shrink-0" />
+        <div className="mb-2 sm:mb-4 flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 sm:px-3 sm:py-2 text-[10.5px] sm:text-xs text-emerald-300 animate-in fade-in duration-200">
+          <CheckCircle2 className="size-3.5 sm:size-4 shrink-0" />
           <span>{successMsg}</span>
         </div>
       )}
 
       {/* Error alert */}
       {errorMsg && (
-        <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3.5 py-2.5 text-xs text-red-300 animate-in fade-in duration-200">
+        <div className="mb-2 sm:mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1.5 sm:px-3 sm:py-2 text-[10.5px] sm:text-xs text-red-300 animate-in fade-in duration-200">
           {errorMsg}
         </div>
       )}
 
       {/* Step 1: Form */}
       {step === "form" && (
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className={activeMode === "register" ? "space-y-2 sm:space-y-3.5" : "space-y-2.5 sm:space-y-4"}>
           {activeMode === "register" ? (
             <>
               <div>
                 <label
                   htmlFor="auth-username"
-                  className="mb-1.5 block text-xs font-medium text-neutral-300"
+                  className="mb-0.5 sm:mb-1 block text-[10px] sm:text-xs font-medium text-neutral-300"
                 >
                   Username
                 </label>
@@ -611,15 +678,15 @@ export function AuthForm({
                   autoComplete="username"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="Choose a unique username"
-                  className="w-full h-11 px-3.5 rounded-lg bg-[#1a1a1d] border border-neutral-800 text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-500 transition-colors"
+                  placeholder="Choose username"
+                  className="w-full h-8 sm:h-10 px-2.5 sm:px-3.5 rounded-md sm:rounded-lg bg-[#1a1a1d] border border-neutral-800 text-xs sm:text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-500 transition-colors"
                 />
               </div>
 
               <div>
                 <label
                   htmlFor="auth-email"
-                  className="mb-1.5 block text-xs font-medium text-neutral-300"
+                  className="mb-0.5 sm:mb-1 block text-[10px] sm:text-xs font-medium text-neutral-300"
                 >
                   Email
                 </label>
@@ -631,14 +698,14 @@ export function AuthForm({
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="name@example.com"
-                  className="w-full h-11 px-3.5 rounded-lg bg-[#1a1a1d] border border-neutral-800 text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-500 transition-colors"
+                  className="w-full h-8 sm:h-10 px-2.5 sm:px-3.5 rounded-md sm:rounded-lg bg-[#1a1a1d] border border-neutral-800 text-xs sm:text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-500 transition-colors"
                 />
               </div>
 
               <div>
                 <label
                   htmlFor="auth-password"
-                  className="mb-1.5 block text-xs font-medium text-neutral-300"
+                  className="mb-0.5 sm:mb-1 block text-[10px] sm:text-xs font-medium text-neutral-300"
                 >
                   Password
                 </label>
@@ -650,15 +717,15 @@ export function AuthForm({
                   autoComplete="new-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Password (min 6 characters)"
-                  className="w-full h-11 px-3.5 rounded-lg bg-[#1a1a1d] border border-neutral-800 text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-500 transition-colors"
+                  placeholder="Min 6 characters"
+                  className="w-full h-8 sm:h-10 px-2.5 sm:px-3.5 rounded-md sm:rounded-lg bg-[#1a1a1d] border border-neutral-800 text-xs sm:text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-500 transition-colors"
                 />
               </div>
 
               <div>
                 <label
                   htmlFor="auth-confirm-password"
-                  className="mb-1.5 block text-xs font-medium text-neutral-300"
+                  className="mb-0.5 sm:mb-1 block text-[10px] sm:text-xs font-medium text-neutral-300"
                 >
                   Confirm password
                 </label>
@@ -670,8 +737,8 @@ export function AuthForm({
                   autoComplete="new-password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="Confirm password"
-                  className="w-full h-11 px-3.5 rounded-lg bg-[#1a1a1d] border border-neutral-800 text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-500 transition-colors"
+                  placeholder="Re-enter password"
+                  className="w-full h-8 sm:h-10 px-2.5 sm:px-3.5 rounded-md sm:rounded-lg bg-[#1a1a1d] border border-neutral-800 text-xs sm:text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-500 transition-colors"
                 />
               </div>
             </>
@@ -679,7 +746,7 @@ export function AuthForm({
             <div>
               <label
                 htmlFor="auth-forgot-identifier"
-                className="mb-1.5 block text-xs font-medium text-neutral-300"
+                className="mb-0.5 sm:mb-1 block text-[10px] sm:text-xs font-medium text-neutral-300"
               >
                 Username or Registered Email
               </label>
@@ -691,7 +758,7 @@ export function AuthForm({
                 value={loginIdentifier}
                 onChange={(e) => setLoginIdentifier(e.target.value)}
                 placeholder="Enter your username or email"
-                className="w-full h-11 px-3.5 rounded-lg bg-[#1a1a1d] border border-neutral-800 text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-500 transition-colors"
+                className="w-full h-8.5 sm:h-10.5 px-2.5 sm:px-3.5 rounded-md sm:rounded-lg bg-[#1a1a1d] border border-neutral-800 text-xs sm:text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-500 transition-colors"
               />
             </div>
           ) : (
@@ -699,7 +766,7 @@ export function AuthForm({
               <div>
                 <label
                   htmlFor="auth-identifier"
-                  className="mb-1.5 block text-xs font-medium text-neutral-300"
+                  className="mb-0.5 sm:mb-1 block text-[10px] sm:text-xs font-medium text-neutral-300"
                 >
                   Username or Email
                 </label>
@@ -711,15 +778,15 @@ export function AuthForm({
                   value={loginIdentifier}
                   onChange={(e) => setLoginIdentifier(e.target.value)}
                   placeholder="Username or email address"
-                  className="w-full h-11 px-3.5 rounded-lg bg-[#1a1a1d] border border-neutral-800 text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-500 transition-colors"
+                  className="w-full h-8.5 sm:h-10.5 px-2.5 sm:px-3.5 rounded-md sm:rounded-lg bg-[#1a1a1d] border border-neutral-800 text-xs sm:text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-500 transition-colors"
                 />
               </div>
 
               <div>
-                <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center justify-between mb-0.5 sm:mb-1">
                   <label
                     htmlFor="auth-password"
-                    className="block text-xs font-medium text-neutral-300"
+                    className="block text-[10px] sm:text-xs font-medium text-neutral-300"
                   >
                     Password
                   </label>
@@ -727,7 +794,7 @@ export function AuthForm({
                     type="button"
                     id="auth-forgot-password-link"
                     onClick={() => handleSwitch("forgot")}
-                    className="text-xs text-neutral-400 hover:text-white transition-colors cursor-pointer"
+                    className="text-[10px] sm:text-xs text-neutral-400 hover:text-white transition-colors cursor-pointer"
                   >
                     Forgot password?
                   </button>
@@ -741,7 +808,7 @@ export function AuthForm({
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Password"
-                  className="w-full h-11 px-3.5 rounded-lg bg-[#1a1a1d] border border-neutral-800 text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-500 transition-colors"
+                  className="w-full h-8.5 sm:h-10.5 px-2.5 sm:px-3.5 rounded-md sm:rounded-lg bg-[#1a1a1d] border border-neutral-800 text-xs sm:text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-500 transition-colors"
                 />
               </div>
             </>
@@ -751,17 +818,17 @@ export function AuthForm({
             id="auth-submit-button"
             type="submit"
             disabled={loading}
-            className="w-full h-10 mt-3 bg-[#ededed] hover:bg-white active:scale-[0.99] text-neutral-950 font-semibold text-sm rounded-lg transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2"
+            className="w-full h-8.5 sm:h-10 mt-2 sm:mt-3 bg-[#ededed] hover:bg-white active:scale-[0.99] text-neutral-950 font-semibold text-xs sm:text-sm rounded-md sm:rounded-lg transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2"
           >
             {loading ? (
               <>
-                <Loader2 className="size-4 animate-spin" />
+                <Loader2 className="size-3.5 sm:size-4 animate-spin" />
                 <span>Sending verification code...</span>
               </>
             ) : (
               <span key={`btn-text-${activeMode}`} className="animate-in fade-in duration-200">
                 {activeMode === "register"
-                  ? "Sign up"
+                  ? "Create account"
                   : activeMode === "forgot"
                   ? "Send verification code"
                   : "Sign in"}
@@ -773,9 +840,9 @@ export function AuthForm({
 
       {/* Step 2: 4-Digit OTP Verification Screen */}
       {step === "otp" && (
-        <form onSubmit={handleVerifyOtp} className="space-y-5 animate-in fade-in duration-300">
+        <form onSubmit={handleVerifyOtp} className="space-y-3 sm:space-y-4 animate-in fade-in duration-300">
           <div>
-            <div className="flex items-center justify-center gap-3 my-3">
+            <div className="flex items-center justify-center gap-2 sm:gap-3 my-2">
               {otpDigits.map((digit, idx) => (
                 <input
                   key={`otp-box-${idx}`}
@@ -792,21 +859,24 @@ export function AuthForm({
                   onPaste={handleOtpPaste}
                   onChange={(e) => handleOtpDigitChange(idx, e.target.value)}
                   onKeyDown={(e) => handleOtpKeyDown(idx, e)}
-                  className="w-13 h-14 text-center text-2xl font-bold bg-[#1a1a1d] border border-neutral-700/80 rounded-xl text-white focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition-all shadow-inner"
+                  className="w-10 h-11 sm:w-13 sm:h-14 text-center text-lg sm:text-2xl font-bold bg-[#1a1a1d] border border-neutral-700/80 rounded-lg sm:rounded-xl text-white focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition-all shadow-inner"
                 />
               ))}
             </div>
+            <p className="text-[10px] sm:text-[11px] text-neutral-500 text-center mt-2 leading-relaxed">
+              If you don&apos;t see the email in your Inbox, please check your <strong>Spam / Junk folder</strong>.
+            </p>
           </div>
 
           <Button
             id="otp-verify-button"
             type="submit"
             disabled={loading || otpDigits.join("").length !== 4}
-            className="w-full h-10 bg-[#ededed] hover:bg-white active:scale-[0.99] text-neutral-950 font-semibold text-sm rounded-lg transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2"
+            className="w-full h-9 sm:h-10 bg-[#ededed] hover:bg-white active:scale-[0.99] text-neutral-950 font-semibold text-xs sm:text-sm rounded-lg transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2"
           >
             {loading ? (
               <>
-                <Loader2 className="size-4 animate-spin" />
+                <Loader2 className="size-3.5 sm:size-4 animate-spin" />
                 <span>Verifying code...</span>
               </>
             ) : (
@@ -815,9 +885,9 @@ export function AuthForm({
           </Button>
 
           {/* Resend Action with 60s cooldown */}
-          <div className="flex items-center justify-center text-xs text-neutral-400 pt-1">
+          <div className="flex items-center justify-center text-[11px] sm:text-xs text-neutral-400 pt-1">
             {cooldown > 0 ? (
-              <span className="text-neutral-500 font-mono text-[11px]">Resend code in {cooldown}s</span>
+              <span className="text-neutral-500 font-mono text-[10px] sm:text-[11px]">Resend code in {cooldown}s</span>
             ) : (
               <button
                 type="button"
@@ -840,11 +910,11 @@ export function AuthForm({
 
       {/* Step 3: Create New Password Screen (for Forgot Password) */}
       {step === "reset-password" && (
-        <form onSubmit={handleResetPasswordSubmit} className="space-y-4 animate-in fade-in duration-300">
+        <form onSubmit={handleResetPasswordSubmit} className="space-y-3 sm:space-y-4 animate-in fade-in duration-300">
           <div>
             <label
               htmlFor="auth-new-password"
-              className="mb-1.5 block text-xs font-medium text-neutral-300"
+              className="mb-1 block text-[11px] sm:text-xs font-medium text-neutral-300"
             >
               New password
             </label>
@@ -857,14 +927,14 @@ export function AuthForm({
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               placeholder="Enter new password (min 6 chars)"
-              className="w-full h-11 px-3.5 rounded-lg bg-[#1a1a1d] border border-neutral-800 text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-500 transition-colors"
+              className="w-full h-9 sm:h-10.5 px-3 sm:px-3.5 rounded-lg bg-[#1a1a1d] border border-neutral-800 text-xs sm:text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-500 transition-colors"
             />
           </div>
 
           <div>
             <label
               htmlFor="auth-confirm-new-password"
-              className="mb-1.5 block text-xs font-medium text-neutral-300"
+              className="mb-1 block text-[11px] sm:text-xs font-medium text-neutral-300"
             >
               Confirm new password
             </label>
@@ -877,7 +947,7 @@ export function AuthForm({
               value={confirmNewPassword}
               onChange={(e) => setConfirmNewPassword(e.target.value)}
               placeholder="Confirm new password"
-              className="w-full h-11 px-3.5 rounded-lg bg-[#1a1a1d] border border-neutral-800 text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-500 transition-colors"
+              className="w-full h-9 sm:h-10.5 px-3 sm:px-3.5 rounded-lg bg-[#1a1a1d] border border-neutral-800 text-xs sm:text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-500 transition-colors"
             />
           </div>
 
@@ -885,11 +955,11 @@ export function AuthForm({
             id="auth-reset-password-btn"
             type="submit"
             disabled={loading}
-            className="w-full h-10 mt-3 bg-[#ededed] hover:bg-white active:scale-[0.99] text-neutral-950 font-semibold text-sm rounded-lg transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2"
+            className="w-full h-9 sm:h-10 mt-2.5 sm:mt-3 bg-[#ededed] hover:bg-white active:scale-[0.99] text-neutral-950 font-semibold text-xs sm:text-sm rounded-lg transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2"
           >
             {loading ? (
               <>
-                <Loader2 className="size-4 animate-spin" />
+                <Loader2 className="size-3.5 sm:size-4 animate-spin" />
                 <span>Updating password...</span>
               </>
             ) : (
@@ -901,7 +971,7 @@ export function AuthForm({
 
       {/* Switch mode */}
       {step === "form" && (
-        <div className="mt-5 text-center text-xs text-neutral-400">
+        <div className="mt-4 sm:mt-5 text-center text-[11px] sm:text-xs text-neutral-400">
           {activeMode === "register" ? (
             <span className="inline-flex items-center justify-center">
               Already have an account?{" "}
@@ -947,7 +1017,7 @@ export function AuthForm({
   if (compact) return card;
 
   return (
-    <div className="flex min-h-svh flex-col items-center justify-center bg-[#070709] px-4 py-8 text-white selection:bg-white/20">
+    <div className="flex min-h-svh flex-col items-center justify-center bg-[#070709] px-3 sm:px-4 py-4 sm:py-8 text-white selection:bg-white/20">
       {card}
     </div>
   );

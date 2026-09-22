@@ -48,6 +48,10 @@ function readLayout(key: string): WindowLayout | null {
     if (![parsed.x, parsed.y, parsed.width, parsed.height].every((n) => typeof n === "number" && Number.isFinite(n))) {
       return null;
     }
+    // Prevent staying stuck in a collapsed or minimized height state from a previous session
+    if (parsed.height < 450) {
+      parsed.height = 560;
+    }
     return parsed;
   } catch {
     return null;
@@ -81,7 +85,6 @@ function clampLayout(
 
 const MIN_WIDTH = 340;
 const VIEW_PAD = 16;
-const LIBRARY_SPACE = 180;
 
 export function FloatingWindow({
   title,
@@ -112,6 +115,9 @@ export function FloatingWindow({
   const drag = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
   const resize = useRef<{ startX: number; startY: number; originW: number; originH: number } | null>(null);
   const restore = useRef({ x: defaultX, y: defaultY, width: defaultWidth, height: defaultHeight });
+  const interactingRef = useRef(false);
+  const moveRaf = useRef<number | null>(null);
+  const resizeRaf = useRef<number | null>(null);
   const defaultsRef = useRef({
     defaultX,
     defaultY,
@@ -179,6 +185,7 @@ export function FloatingWindow({
     if (maximized) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     setInteracting(true);
+    interactingRef.current = true;
     drag.current = {
       startX: event.clientX,
       startY: event.clientY,
@@ -190,57 +197,91 @@ export function FloatingWindow({
 
   function onPointerMove(event: React.PointerEvent<HTMLDivElement>) {
     if (!drag.current) return;
-    setPos({
-      x: drag.current.originX + (event.clientX - drag.current.startX),
-      y: drag.current.originY + (event.clientY - drag.current.startY),
+    const clientX = event.clientX;
+    const clientY = event.clientY;
+    if (moveRaf.current) cancelAnimationFrame(moveRaf.current);
+    moveRaf.current = requestAnimationFrame(() => {
+      if (!drag.current) return;
+      setPos({
+        x: drag.current.originX + (clientX - drag.current.startX),
+        y: drag.current.originY + (clientY - drag.current.startY),
+      });
     });
   }
 
   function onPointerUp(event: React.PointerEvent<HTMLDivElement>) {
+    if (moveRaf.current) {
+      cancelAnimationFrame(moveRaf.current);
+      moveRaf.current = null;
+    }
     if (drag.current) {
+      const finalX = drag.current.originX + (event.clientX - drag.current.startX);
+      const finalY = drag.current.originY + (event.clientY - drag.current.startY);
+      setPos({ x: finalX, y: finalY });
       persistLayout({
-        x: drag.current.originX + (event.clientX - drag.current.startX),
-        y: drag.current.originY + (event.clientY - drag.current.startY),
+        x: finalX,
+        y: finalY,
         width: size.width,
         height: minimized ? restore.current.height : size.height,
       });
     }
     drag.current = null;
     setInteracting(false);
+    interactingRef.current = false;
     event.currentTarget.releasePointerCapture(event.pointerId);
   }
 
   function toggleMinimize() {
     if (minimized) {
       setMinimized(false);
-      setSize((current) => ({
-        ...current,
-        height: Math.max(minHeight, restore.current.height),
-      }));
+      const restoredH = Math.max(defaultHeight, restore.current.height, 540);
+      const restoredW = Math.max(defaultWidth, restore.current.width);
+      setSize({
+        width: restoredW,
+        height: restoredH,
+      });
+      persistLayout({
+        x: pos.x,
+        y: pos.y,
+        width: restoredW,
+        height: restoredH,
+      });
       return;
     }
+    // Record current unminimized layout
+    restore.current = {
+      x: pos.x,
+      y: pos.y,
+      width: size.width,
+      height: Math.max(size.height, defaultHeight, 540),
+    };
     if (maximized) {
       setMaximized(false);
       setPos({ x: restore.current.x, y: restore.current.y });
-    } else {
-      restore.current = { x: pos.x, y: pos.y, width: size.width, height: size.height };
     }
     setSize((current) => ({ ...current, height: minHeight }));
     setMinimized(true);
   }
 
   function toggleMaximize() {
-    const wasMinimized = minimized;
-    if (wasMinimized) setMinimized(false);
     if (maximized) {
       setMaximized(false);
       setPos({ x: restore.current.x, y: restore.current.y });
-      setSize({ width: restore.current.width, height: restore.current.height });
+      const restoredH = Math.max(defaultHeight, restore.current.height, 540);
+      const restoredW = Math.max(defaultWidth, restore.current.width);
+      setSize({ width: restoredW, height: restoredH });
+      setMinimized(false);
       return;
     }
-    if (!wasMinimized) {
-      restore.current = { x: pos.x, y: pos.y, width: size.width, height: size.height };
+    if (!minimized) {
+      restore.current = {
+        x: pos.x,
+        y: pos.y,
+        width: size.width,
+        height: Math.max(size.height, defaultHeight, 540),
+      };
     }
+    setMinimized(false);
     setMaximized(true);
   }
 
@@ -259,25 +300,37 @@ export function FloatingWindow({
 
   function onResizeMove(event: React.PointerEvent<HTMLDivElement>) {
     if (!resize.current) return;
-    const maxW = viewport.width - pos.x - VIEW_PAD;
-    const maxH = viewport.height - pos.y - VIEW_PAD;
-    const nextHeight = Math.min(maxH, Math.max(minHeight, resize.current.originH + (event.clientY - resize.current.startY)));
-    setMinimized(nextHeight < minHeight + LIBRARY_SPACE);
-    setSize({
-      width: Math.min(maxW, Math.max(MIN_WIDTH, resize.current.originW + (event.clientX - resize.current.startX))),
-      height: nextHeight,
+    const clientX = event.clientX;
+    const clientY = event.clientY;
+    if (resizeRaf.current) cancelAnimationFrame(resizeRaf.current);
+    resizeRaf.current = requestAnimationFrame(() => {
+      if (!resize.current) return;
+      const maxW = viewport.width - pos.x - VIEW_PAD;
+      const maxH = viewport.height - pos.y - VIEW_PAD;
+      const nextHeight = Math.min(maxH, Math.max(minHeight, resize.current.originH + (clientY - resize.current.startY)));
+      setSize({
+        width: Math.min(maxW, Math.max(MIN_WIDTH, resize.current.originW + (clientX - resize.current.startX))),
+        height: nextHeight,
+      });
     });
   }
 
   function onResizeUp(event: React.PointerEvent<HTMLDivElement>) {
+    if (resizeRaf.current) {
+      cancelAnimationFrame(resizeRaf.current);
+      resizeRaf.current = null;
+    }
     if (resize.current) {
       const maxW = viewport.width - pos.x - VIEW_PAD;
       const maxH = viewport.height - pos.y - VIEW_PAD;
+      const finalW = Math.min(maxW, Math.max(MIN_WIDTH, resize.current.originW + (event.clientX - resize.current.startX)));
+      const finalH = Math.min(maxH, Math.max(minHeight, resize.current.originH + (event.clientY - resize.current.startY)));
+      setSize({ width: finalW, height: finalH });
       persistLayout({
         x: pos.x,
         y: pos.y,
-        width: Math.min(maxW, Math.max(MIN_WIDTH, resize.current.originW + (event.clientX - resize.current.startX))),
-        height: Math.min(maxH, Math.max(minHeight, resize.current.originH + (event.clientY - resize.current.startY))),
+        width: finalW,
+        height: finalH,
       });
     }
     resize.current = null;
@@ -285,8 +338,8 @@ export function FloatingWindow({
     event.currentTarget.releasePointerCapture(event.pointerId);
   }
 
-  const compact = minimized || (!maximized && !hugContent && size.height < minHeight + LIBRARY_SPACE);
-  const hug = hugContent || compact || minimized;
+  const compact = minimized;
+  const hug = minimized || hugContent;
 
   const left = maximized ? VIEW_PAD : pos.x;
   const top = maximized ? maxTop : pos.y;
@@ -312,7 +365,14 @@ export function FloatingWindow({
         className
       )}
       data-compact={compact ? "true" : "false"}
-      style={{ left, top, zIndex, width, height }}
+      style={{
+        left,
+        top,
+        zIndex,
+        width,
+        height,
+        willChange: interacting ? "left, top, width, height" : undefined,
+      }}
       onPointerDown={raise}
     >
       <div
@@ -338,7 +398,7 @@ export function FloatingWindow({
                 aria-label={minimized ? "Restore" : "Minimize"}
                 onClick={toggleMinimize}
               >
-                <Minus />
+                {minimized ? <Maximize2 className="size-3.5" /> : <Minus className="size-3.5" />}
               </Button>
               <Button
                 type="button"
@@ -349,7 +409,7 @@ export function FloatingWindow({
                 aria-label={maximized ? "Restore" : "Maximize"}
                 onClick={toggleMaximize}
               >
-                {maximized ? <Minimize2 /> : <Maximize2 />}
+                {maximized ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
               </Button>
             </>
           ) : null}

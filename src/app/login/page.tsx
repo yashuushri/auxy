@@ -1,17 +1,24 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useEffect } from "react";
-import { AuthForm } from "@/components/auth-form";
 import { useAuth } from "@/context/auth-context";
+import { DesktopHome } from "@/components/desktop-home";
+import { LandingPage } from "@/components/landing-page";
 
 export default function LoginPage() {
   const { ready, user } = useAuth();
-  const router = useRouter();
 
-  useEffect(() => {
-    if (ready && user) router.replace("/");
-  }, [ready, user, router]);
+  if (!ready) {
+    return (
+      <div className="flex min-h-svh items-center justify-center bg-[#070709] text-white">
+        <div className="size-8 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+      </div>
+    );
+  }
 
-  return <AuthForm mode="login" />;
+  if (user) {
+    return <DesktopHome />;
+  }
+
+  return <LandingPage initialView="login" />;
 }
+

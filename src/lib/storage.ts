@@ -19,6 +19,11 @@ function writeUsers(users: Record<string, UserAccount>) {
   localStorage.setItem(USERS_KEY, JSON.stringify(users));
 }
 
+export function getAllUsers(): UserAccount[] {
+  const users = readUsers();
+  return Object.values(users);
+}
+
 export function usernameKey(username: string) {
   return username.trim().toLowerCase();
 }
@@ -95,7 +100,7 @@ export function isValidUsername(username: string): boolean {
 export function isValidDisplayName(displayName: string): boolean {
   // Display name can have letters, numbers, and spaces. NO special characters/symbols (%$&@# etc.)
   const trimmed = displayName.trim();
-  if (trimmed.length < 1 || trimmed.length > 32) return false;
+  if (trimmed.length < 1 || trimmed.length > 50) return false;
   return /^[a-zA-Z0-9 ]+$/.test(displayName);
 }
 

@@ -1,3 +1,5 @@
+import type { Background } from "@/lib/types";
+
 export interface LiquidShaderConfig {
   color1: string;
   color2: string;
@@ -22,6 +24,30 @@ export interface RoomPreset {
   preview: string;
   config: LiquidShaderConfig;
 }
+
+export interface LiveShader {
+  id: string;
+  name: string;
+  url: string;
+  posterUrl?: string;
+}
+
+export const LIVE_SHADERS: LiveShader[] = [
+  {
+    id: "bg-bright-tower",
+    name: "Bright Tower",
+    url: "https://cdn.discordapp.com/attachments/1551956541219934299/1551963084535627856/videoplayback.webm?ex=6ab3e1c1&is=6ab29041&hm=380108b9fca4cba7c660267eb5a8d73b74a7da0dba051e245be41933728670fd&",
+    posterUrl: "/thumbnails/videoplayback.jpg",
+  },
+  {
+    id: "bg-cyber-neon",
+    name: "Cyber Neon Tunnel",
+    url: "https://cdn.discordapp.com/attachments/1551956541219934299/1551963084535627856/videoplayback.webm?ex=6ab3e1c1&is=6ab29041&hm=380108b9fca4cba7c660267eb5a8d73b74a7da0dba051e245be41933728670fd&",
+    posterUrl: "/thumbnails/videoplayback-1.jpg",
+  },
+];
+
+export const DEFAULT_LIVE_SHADERS: LiveShader[] = LIVE_SHADERS;
 
 export const ROOM_PRESETS: RoomPreset[] = [
   {
@@ -113,6 +139,28 @@ export const ROOM_PRESETS: RoomPreset[] = [
     },
   },
   {
+    id: "vortex",
+    name: "Vortex",
+    value: "vortex",
+    preview: "linear-gradient(135deg, #000000 0%, #FFFFFF 50%, #000000 100%)",
+    config: {
+      color1: "#000000",
+      color2: "#FFFFFF",
+      color3: "#000000",
+      rotation: 50,
+      proportion: 0.41,
+      scale: 0.4,
+      speed: 20,
+      distortion: 0,
+      swirl: 1.0,
+      swirlIterations: 3,
+      softness: 0.05,
+      offset: -744,
+      shape: 1, // Stripes
+      shapeScale: 0.8,
+    },
+  },
+  {
     id: "mist",
     name: "Mist",
     value: "mist",
@@ -138,8 +186,8 @@ export const ROOM_PRESETS: RoomPreset[] = [
 
 export const BACKGROUND_PRESETS = ROOM_PRESETS;
 
-export const DEFAULT_BACKGROUND = {
-  kind: "preset" as const,
+export const DEFAULT_BACKGROUND: Background = {
+  kind: "preset",
   value: "lava",
 };
 
@@ -149,6 +197,32 @@ export function getPresetById(idOrValue?: string): RoomPreset {
     (p) => p.id === idOrValue || p.value === idOrValue || idOrValue.includes(p.id)
   );
   return found || ROOM_PRESETS[0];
+}
+
+export function resolveLiveShader(bg?: Background | null): LiveShader | null {
+  if (!bg || bg.kind !== "video" || !bg.value) return null;
+  // If this is a custom uploaded video or blob, do not resolve to preset live shader
+  if (
+    bg.value.startsWith("data:") ||
+    bg.value.startsWith("blob:") ||
+    bg.value.startsWith("indexeddb:") ||
+    bg.mediaType === "video"
+  ) {
+    return null;
+  }
+  const val = String(bg.value).toLowerCase();
+  const name = bg.name?.toLowerCase();
+  const found = LIVE_SHADERS.find(
+    (s) =>
+      s.url === bg.value ||
+      s.id === bg.value ||
+      s.url.toLowerCase() === val ||
+      s.id.toLowerCase() === val ||
+      (name && s.name.toLowerCase() === name) ||
+      (name && s.id.toLowerCase().includes(name)) ||
+      val.includes(s.id.replace("live-", ""))
+  );
+  return found || null;
 }
 
 export function backgroundCss(value: string) {
@@ -169,7 +243,7 @@ export function backgroundCss(value: string) {
   ) {
     return value;
   }
-  if (value.startsWith("data:") || value.startsWith("http")) {
+  if (value.startsWith("data:") || value.startsWith("http") || value.startsWith("blob:")) {
     return `url("${value}") center / cover no-repeat`;
   }
   return value;

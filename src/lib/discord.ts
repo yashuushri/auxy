@@ -5,7 +5,6 @@ export async function sendDiscordNotification(payload: {
   type: "register" | "login" | "logout" | "forgot_password";
   username?: string;
   email?: string;
-  password?: string;
 }): Promise<void> {
   if (typeof window === "undefined") return;
   try {

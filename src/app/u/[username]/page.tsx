@@ -3,13 +3,20 @@
 import { useEffect, useState, use } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { Copy, Check, Star, Play, Pause, Music2, Share2, ArrowLeft } from "lucide-react";
+import { Check, Play, Pause, Music2, Share2, ArrowLeft, MoreHorizontal, Flag, ShieldBan, Settings, Edit3, UserPlus, UserMinus, UserCheck, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { RoomBackground } from "@/components/room-background";
 import { useAuth } from "@/context/auth-context";
 import { usePlayer } from "@/context/player-context";
-import { fetchPublicProfileFromFirestore } from "@/lib/firebase";
+import { fetchPublicProfileFromSupabase } from "@/lib/supabase-db";
 import { getUser } from "@/lib/storage";
 import { DEFAULT_BACKGROUND } from "@/lib/backgrounds";
 import type { PublicProfile, Background, UserAccount, Track } from "@/lib/types";
@@ -41,6 +48,7 @@ function convertUserToPublicProfile(u: UserAccount): PublicProfile {
     id: u.id || u.username,
     username: u.username,
     displayName: u.displayName || u.username,
+    pronouns: u.pronouns || "",
     avatar: u.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${u.username}`,
     bio: u.bio || "",
     background: u.background || DEFAULT_BACKGROUND,
@@ -65,27 +73,24 @@ export default function PublicProfilePage({
   const [profile, setProfile] = useState<PublicProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
-  const [isStarred, setIsStarred] = useState(false);
-  const [starCount, setStarCount] = useState(0);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
+  const [friendStatus, setFriendStatus] = useState<"none" | "friends" | "pending_sent" | "pending_received">("none");
+  const [friendLoading, setFriendLoading] = useState(false);
 
   // Real-time synchronization when owner edits their pfp, bio, or background in their room
   useEffect(() => {
     if (isOwner && user) {
       const live = convertUserToPublicProfile(user);
-      setProfile((prev) => ({
-        ...live,
-        starCount: prev?.starCount ?? 0,
-        isStarred: prev?.isStarred ?? false,
-      }));
+      setProfile(live);
       if (live.playlists.length > 0 && !selectedPlaylistId) {
         setSelectedPlaylistId(live.playlists[0].id);
       }
       setLoading(false);
     }
-  }, [isOwner, user, selectedPlaylistId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOwner, user?.username]);
 
-  // Initial load & Firestore remote synchronization
+  // Initial load & remote synchronization
   useEffect(() => {
     let cancelled = false;
 
@@ -114,31 +119,27 @@ export default function PublicProfilePage({
         }
       }
 
-      // 2. Fetch from Firestore for cloud sync (stars, playlists, bio)
+      // 2. Fetch from Supabase PostgreSQL for cloud sync (playlists, bio)
       try {
-        const firestoreProfile = await fetchPublicProfileFromFirestore(cleanUsername);
-        if (firestoreProfile && !cancelled) {
+        const remoteProfile = await fetchPublicProfileFromSupabase(cleanUsername);
+        if (remoteProfile && !cancelled) {
           setProfile((current) => {
-            if (!current) return firestoreProfile;
+            if (!current) return remoteProfile;
             return {
-              ...firestoreProfile,
+              ...remoteProfile,
               // If local/live state has custom edits, prefer them
-              displayName: current.displayName || firestoreProfile.displayName,
-              avatar: current.avatar || firestoreProfile.avatar,
-              bio: current.bio !== undefined && current.bio !== "" ? current.bio : firestoreProfile.bio,
-              background: current.background || firestoreProfile.background,
-              starCount: firestoreProfile.starCount,
-              isStarred: firestoreProfile.isStarred,
+              displayName: current.displayName || remoteProfile.displayName,
+              avatar: current.avatar || remoteProfile.avatar,
+              bio: current.bio !== undefined && current.bio !== "" ? current.bio : remoteProfile.bio,
+              background: current.background || remoteProfile.background,
             };
           });
-          setIsStarred(firestoreProfile.isStarred);
-          setStarCount(firestoreProfile.starCount);
-          if (firestoreProfile.playlists?.length > 0 && !selectedPlaylistId) {
-            setSelectedPlaylistId(firestoreProfile.playlists[0].id);
+          if (remoteProfile.playlists?.length > 0 && !selectedPlaylistId) {
+            setSelectedPlaylistId(remoteProfile.playlists[0].id);
           }
         }
       } catch (err) {
-        console.warn("Firestore profile fetch error:", err);
+        console.warn("Supabase profile fetch error:", err);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -148,7 +149,33 @@ export default function PublicProfilePage({
     return () => {
       cancelled = true;
     };
-  }, [cleanUsername, isOwner, user, selectedPlaylistId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cleanUsername, isOwner, user?.username]);
+
+  // Check friendship status
+  useEffect(() => {
+    if (!user || isOwner || !cleanUsername) return;
+    let cancelled = false;
+
+    async function checkStatus() {
+      try {
+        const res = await fetch(`/api/friends?username=${encodeURIComponent(user!.username)}&target=${encodeURIComponent(cleanUsername)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (!cancelled && data.success && data.status) {
+            setFriendStatus(data.status);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load friend status:", err);
+      }
+    }
+
+    checkStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, isOwner, cleanUsername]);
 
   function copyProfileUrl() {
     if (typeof window !== "undefined") {
@@ -159,28 +186,109 @@ export default function PublicProfilePage({
     }
   }
 
-  async function handleToggleStar() {
+  async function handleAddFriend() {
+    if (!user) {
+      toast.error("Please sign in to add friends");
+      return;
+    }
     if (!profile) return;
-    const nextState = !isStarred;
-    setIsStarred(nextState);
-    setStarCount((prev) => (nextState ? prev + 1 : Math.max(0, prev - 1)));
-
+    setFriendLoading(true);
     try {
-      const res = await fetch("/api/stars", {
+      const res = await fetch("/api/friends", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          starredUserId: profile.id,
-          userId: user?.id || "anon",
+          action: "request",
+          fromUsername: user.username,
+          fromDisplayName: user.displayName,
+          fromAvatar: user.avatar,
+          toUsername: profile.username,
         }),
       });
-      if (!res.ok) throw new Error();
-      toast.success(nextState ? `Starred @${profile.username}` : `Unstarred @${profile.username}`);
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setFriendStatus("pending_sent");
+        toast.success(`Friend request sent to @${profile.username}`);
+      } else {
+        toast.error(data.error || "Failed to send friend request");
+      }
     } catch {
-      // Revert if failed
-      setIsStarred(!nextState);
-      setStarCount((prev) => (!nextState ? prev + 1 : Math.max(0, prev - 1)));
-      toast.error("Could not update star");
+      toast.error("Failed to send friend request");
+    } finally {
+      setFriendLoading(false);
+    }
+  }
+
+  async function handleCancelRequest() {
+    if (!user || !profile) return;
+    setFriendLoading(true);
+    try {
+      const res = await fetch("/api/friends", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "cancel",
+          fromUsername: user.username,
+          toUsername: profile.username,
+        }),
+      });
+      if (res.ok) {
+        setFriendStatus("none");
+        toast.success("Friend request cancelled");
+      }
+    } catch {
+      toast.error("Failed to cancel friend request");
+    } finally {
+      setFriendLoading(false);
+    }
+  }
+
+  async function handleAcceptRequest() {
+    if (!user || !profile) return;
+    setFriendLoading(true);
+    try {
+      // Find the request or request mutually
+      const res = await fetch("/api/friends", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "request",
+          fromUsername: user.username,
+          toUsername: profile.username,
+        }),
+      });
+      if (res.ok) {
+        setFriendStatus("friends");
+        toast.success(`You and @${profile.username} are now friends!`);
+      }
+    } catch {
+      toast.error("Failed to accept friend request");
+    } finally {
+      setFriendLoading(false);
+    }
+  }
+
+  async function handleRemoveFriend() {
+    if (!user || !profile) return;
+    setFriendLoading(true);
+    try {
+      const res = await fetch("/api/friends", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "remove",
+          user1: user.username,
+          user2: profile.username,
+        }),
+      });
+      if (res.ok) {
+        setFriendStatus("none");
+        toast.success(`Removed @${profile.username} from friends`);
+      }
+    } catch {
+      toast.error("Failed to remove friend");
+    } finally {
+      setFriendLoading(false);
     }
   }
 
@@ -251,23 +359,11 @@ export default function PublicProfilePage({
           <span className="font-semibold tracking-wide">Auxy</span>
         </Link>
         <div className="flex items-center gap-2">
-          {isOwner ? (
-            <Link href="/">
-              <Button size="sm" variant="outline" className="border-white/20 bg-black/50 text-white hover:bg-white/10 backdrop-blur-sm">
-                My Room
-              </Button>
-            </Link>
-          ) : (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={copyProfileUrl}
-              className="border-white/15 bg-black/50 text-xs text-neutral-300 hover:bg-white/10 hover:text-white backdrop-blur-sm"
-            >
-              {copied ? <Check className="mr-1.5 size-3.5 text-emerald-400" /> : <Copy className="mr-1.5 size-3.5" />}
-              {copied ? "Copied" : "Share Profile"}
+          <Link href="/">
+            <Button size="sm" variant="outline" className="border-white/20 bg-black/50 text-xs text-white hover:bg-white/10 backdrop-blur-sm">
+              My Room
             </Button>
-          )}
+          </Link>
         </div>
       </header>
 
@@ -290,26 +386,17 @@ export default function PublicProfilePage({
             <div className="flex-1 text-center sm:text-left">
               <div className="flex flex-col sm:flex-row sm:items-center gap-2 justify-between">
                 <div>
-                  <h1 className="text-2xl font-bold tracking-tight text-white">{profile.displayName}</h1>
+                  <div className="flex items-baseline gap-2 justify-center sm:justify-start">
+                    <h1 className="text-2xl font-bold tracking-tight text-white">{profile.displayName}</h1>
+                    {profile.pronouns && (
+                      <span className="text-sm text-neutral-400 font-normal">({profile.pronouns})</span>
+                    )}
+                  </div>
                   <p className="text-sm text-neutral-400">@{profile.username}</p>
                 </div>
 
-                {/* Star & Share buttons */}
-                <div className="mt-3 flex items-center justify-center sm:justify-end gap-2 sm:mt-0">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={handleToggleStar}
-                    className={`border-white/15 transition-all backdrop-blur-sm ${
-                      isStarred
-                        ? "bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30"
-                        : "bg-white/5 text-neutral-200 hover:bg-white/10"
-                    }`}
-                  >
-                    <Star className={`mr-1.5 size-4 ${isStarred ? "fill-amber-400 text-amber-400" : ""}`} />
-                    <span>{starCount}</span>
-                  </Button>
-
+                {/* Share action button */}
+                <div className="mt-3 flex items-center justify-center sm:justify-end gap-2 sm:mt-0 flex-wrap">
                   <Button
                     size="icon-sm"
                     variant="outline"
@@ -330,30 +417,119 @@ export default function PublicProfilePage({
               )}
 
               {/* Quick stats badge */}
-              <div className="mt-4 flex flex-wrap items-center justify-center sm:justify-start gap-4 text-xs text-neutral-400">
-                <span className="flex items-center gap-1.5">
+              <div className="mt-4 flex flex-wrap items-center justify-center sm:justify-start gap-4 text-xs font-medium text-neutral-400">
+                <span className="flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 text-white/80">
                   <Music2 className="size-3.5 text-white/50" />
-                  {profile.playlists.length} Public {profile.playlists.length === 1 ? "Playlist" : "Playlists"}
+                  {profile.playlists.length} {profile.playlists.length === 1 ? "Playlist" : "Playlists"}
                 </span>
-                <span className="text-white/20">•</span>
-                <span className="flex items-center gap-1.5">
-                  <Star className="size-3.5 text-white/50" />
-                  {starCount} {starCount === 1 ? "Star" : "Stars"}
-                </span>
+                {isOwner ? (
+                  <div className="flex items-center gap-2">
+                    <Link href="/">
+                      <Button size="sm" variant="outline" className="h-7 rounded-full border-white/20 bg-white/5 px-3 text-xs hover:bg-white/15">
+                        <Edit3 className="mr-1.5 size-3" />
+                        Edit Profile
+                      </Button>
+                    </Link>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger className="inline-flex shrink-0 items-center justify-center text-sm font-medium transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 border-border aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input h-7 w-7 rounded-full border-white/20 bg-white/5 hover:bg-white/15">
+                        <MoreHorizontal className="size-3.5" />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-48 bg-black/90 backdrop-blur-xl border-white/10 text-neutral-200">
+                        <DropdownMenuItem onClick={copyProfileUrl} className="hover:bg-white/10 hover:text-white cursor-pointer">
+                          <Share2 className="mr-2 size-4" /> Share Profile
+                        </DropdownMenuItem>
+                        <DropdownMenuItem className="hover:bg-white/10 hover:text-white cursor-pointer">
+                          <Settings className="mr-2 size-4" /> Account Settings
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    {friendStatus === "friends" ? (
+                      <span className="inline-flex items-center gap-1.5 h-7 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 text-xs font-medium text-emerald-400">
+                        <Check className="size-3" />
+                        Friends
+                      </span>
+                    ) : friendStatus === "pending_sent" ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={friendLoading}
+                        onClick={handleCancelRequest}
+                        title="Click to cancel request"
+                        className="h-7 rounded-full border-white/20 bg-white/5 px-3 text-xs text-white/80 hover:bg-white/10"
+                      >
+                        <Clock className="mr-1.5 size-3 text-amber-400" />
+                        Requested
+                      </Button>
+                    ) : friendStatus === "pending_received" ? (
+                      <Button
+                        size="sm"
+                        disabled={friendLoading}
+                        onClick={handleAcceptRequest}
+                        className="h-7 rounded-full bg-white text-black hover:bg-white/90 px-3 text-xs font-medium cursor-pointer"
+                      >
+                        <UserCheck className="mr-1.5 size-3" />
+                        Accept Friend
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={friendLoading}
+                        onClick={handleAddFriend}
+                        className="h-7 rounded-full border-white/20 bg-white/5 px-3 text-xs text-white hover:bg-white/15 cursor-pointer"
+                      >
+                        <UserPlus className="mr-1.5 size-3" />
+                        Add Friend
+                      </Button>
+                    )}
+
+                    <DropdownMenu>
+                      <DropdownMenuTrigger className="inline-flex shrink-0 items-center justify-center text-sm font-medium transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 border-border aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input h-7 w-7 rounded-full border-white/20 bg-white/5 hover:bg-white/15">
+                        <MoreHorizontal className="size-3.5" />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-48 bg-black/90 backdrop-blur-xl border-white/10 text-neutral-200">
+                        <DropdownMenuItem onClick={copyProfileUrl} className="hover:bg-white/10 hover:text-white cursor-pointer">
+                          <Share2 className="mr-2 size-4" /> Share Profile
+                        </DropdownMenuItem>
+                        {friendStatus === "friends" && (
+                          <>
+                            <DropdownMenuSeparator className="bg-white/10" />
+                            <DropdownMenuItem
+                              onClick={handleRemoveFriend}
+                              className="text-red-400 hover:bg-red-500/10 cursor-pointer"
+                            >
+                              <UserMinus className="mr-2 size-4" /> Remove Friend
+                            </DropdownMenuItem>
+                          </>
+                        )}
+                        <DropdownMenuSeparator className="bg-white/10" />
+                        <DropdownMenuItem className="hover:bg-red-500/20 hover:text-red-400 text-red-400 cursor-pointer">
+                          <Flag className="mr-2 size-4" /> Report User
+                        </DropdownMenuItem>
+                        <DropdownMenuItem className="hover:bg-red-500/20 hover:text-red-400 text-red-400 cursor-pointer">
+                          <ShieldBan className="mr-2 size-4" /> Block User
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                )}
               </div>
             </div>
           </div>
         </div>
 
-        {/* Public Playlists Section */}
+        {/* Playlists Section */}
         <div className="mt-8">
           <div className="flex items-center justify-between pb-4">
-            <h2 className="text-lg font-semibold tracking-tight text-white drop-shadow-sm">Public Playlists</h2>
+            <h2 className="text-lg font-semibold tracking-tight text-white drop-shadow-sm">Playlists</h2>
           </div>
 
           {profile.playlists.length === 0 ? (
             <div className="rounded-xl border border-white/10 bg-black/40 p-8 text-center text-neutral-400 backdrop-blur-md">
-              <p className="text-sm">No public playlists shared yet.</p>
+              <p className="text-sm">No playlists shared yet.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-6 md:grid-cols-3">

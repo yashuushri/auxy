@@ -29,6 +29,7 @@ export function EditPanel() {
   const { currentTrack, isPlaying, playlists, createPlaylist, setActivePlaylist, activePlaylistId } =
     usePlayer();
   const [displayName, setDisplayName] = useState(user?.displayName ?? "");
+  const [pronouns, setPronouns] = useState(user?.pronouns ?? "");
   const [bio, setBio] = useState(user?.bio ?? "");
   const [newPlaylistName, setNewPlaylistName] = useState("");
   const avatarRef = useRef<HTMLInputElement>(null);
@@ -36,6 +37,7 @@ export function EditPanel() {
   useEffect(() => {
     if (user) {
       setDisplayName(user.displayName);
+      setPronouns(user.pronouns ?? "");
       setBio(user.bio ?? "");
     }
   }, [user]);
@@ -155,26 +157,51 @@ export function EditPanel() {
 
       <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="displayName" className="text-white text-xs">
-            Display name
-          </Label>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="displayName" className="text-white text-xs">
+              Display name
+            </Label>
+            <span className="text-[10px] text-white/40">{displayName.length}/50</span>
+          </div>
           <Input
             id="displayName"
             value={displayName}
-            onChange={(event) => setDisplayName(event.target.value)}
+            onChange={(event) => setDisplayName(event.target.value.slice(0, 50))}
+            maxLength={50}
             placeholder={user.username}
             className="border-white/25 bg-black/20 text-white placeholder:text-white/40 h-8 text-xs"
           />
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="bio" className="text-white text-xs">
-            Bio (Public)
-          </Label>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="pronouns" className="text-white text-xs">
+              Pronouns
+            </Label>
+            <span className="text-[10px] text-white/40">{pronouns.length}/30</span>
+          </div>
+          <Input
+            id="pronouns"
+            value={pronouns}
+            onChange={(event) => setPronouns(event.target.value.slice(0, 30))}
+            maxLength={30}
+            placeholder="e.g. they/them, he/him, she/her"
+            className="border-white/25 bg-black/20 text-white placeholder:text-white/40 h-8 text-xs"
+          />
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="bio" className="text-white text-xs">
+              Bio
+            </Label>
+            <span className="text-[10px] text-white/40">{bio.length}/160</span>
+          </div>
           <Input
             id="bio"
             value={bio}
-            onChange={(event) => setBio(event.target.value)}
+            onChange={(event) => setBio(event.target.value.slice(0, 160))}
+            maxLength={160}
             placeholder="A short note about your music taste"
             className="border-white/25 bg-black/20 text-white placeholder:text-white/40 h-8 text-xs"
           />
@@ -196,11 +223,15 @@ export function EditPanel() {
             className="bg-white text-black hover:bg-white/90 text-xs flex-1"
             onClick={() => {
               const name = displayName.trim() || user.username;
+              if (name.length > 50) {
+                toast.error("Display name must be 50 characters or less.");
+                return;
+              }
               if (!isValidDisplayName(name)) {
                 toast.error("Display name can only contain letters, numbers, and spaces (no special characters like %$&@#).");
                 return;
               }
-              updateUser({ displayName: name, bio: bio.trim() });
+              updateUser({ displayName: name, pronouns: pronouns.trim(), bio: bio.trim() });
               toast.success("Profile saved");
             }}
           >

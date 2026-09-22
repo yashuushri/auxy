@@ -39,6 +39,71 @@ export type PlaybackState = {
 export type Background = {
   kind: "preset" | "color" | "url" | "upload" | "video";
   value: string;
+  posterUrl?: string;
+  name?: string;
+  mediaType?: "photo" | "gif" | "video";
+};
+
+export type BackgroundMetadata = {
+  id: string;
+  name: string;
+  videoUrl: string;
+  posterUrl?: string;
+  active: boolean;
+  version?: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type StarRecord = {
+  id: string;
+  userId: string;
+  starredUserId: string;
+  createdAt: number;
+};
+
+export type RoomRequest = {
+  id: string;
+  roomId: string;
+  userId: string;
+  username: string;
+  displayName: string;
+  avatar: string;
+  status: "pending" | "accepted" | "declined";
+  createdAt: number;
+};
+
+export type Room = {
+  id: string;
+  name: string;
+  hostId: string;
+  hostUsername: string;
+  hostDisplayName?: string;
+  hostAvatar?: string;
+  currentTrack?: Track;
+  playlistTracks?: Track[];
+  playlistName?: string;
+  isPlaying: boolean;
+  position: number;
+  playlistId?: string;
+  participantCount: number;
+  listenTogetherEnabled?: boolean;
+  privacy?: "public" | "friends";
+  autoAccept?: boolean;
+  stateVersion?: number;
+  stateType?: "PLAY" | "PAUSE" | "SEEK" | "TRACK_CHANGE";
+  background?: Background;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type RoomParticipant = {
+  id: string;
+  username: string;
+  displayName: string;
+  avatar: string;
+  joinedAt: number;
+  lastSeen: number;
 };
 
 export type UserAccount = {
@@ -46,6 +111,7 @@ export type UserAccount = {
   discordId?: string;
   username: string;
   displayName: string;
+  pronouns?: string;
   email?: string;
   emailVerified?: boolean;
   password?: string;
@@ -56,10 +122,12 @@ export type UserAccount = {
   library: Track[];
   volume: number;
   createdAt: number;
+  lastActive?: number;
 };
 
 export type RoomProfile = {
   displayName: string;
+  pronouns?: string;
   avatar: string;
   bio?: string;
   background: Background;
@@ -73,6 +141,7 @@ export type PublicProfile = {
   id: string;
   username: string;
   displayName: string;
+  pronouns?: string;
   avatar: string;
   bio: string;
   background?: Background;
@@ -88,5 +157,26 @@ export type PublicProfile = {
     youtubePlaylistId?: string;
     tracks: Track[];
   }[];
+};
+
+export type ExploreUser = {
+  id: string;
+  username: string;
+  displayName: string;
+  pronouns?: string;
+  avatar: string;
+  bio?: string;
+  background?: Background;
+  starCount?: number;
+  lastActive?: number;
+  lastSeen?: number;
+  isOnline?: boolean;
+  isLive?: boolean;
+  hasLiveRoom?: boolean;
+  isPlaying?: boolean;
+  currentTrack?: Track;
+  listenTogetherEnabled?: boolean;
+  participantCount?: number;
+  roomId?: string;
 };
 

@@ -33,10 +33,6 @@ export function parseYouTubeUrl(input: string): ParsedYouTubeInput {
     const vParam = url.searchParams.get("v");
 
     if (listParam && listParam !== "WL" && listParam !== "LL") {
-      // YouTube mixes / radios (starting with RD) cannot be played as playlists in embeds
-      if (listParam.startsWith("RD") && vParam && /^[A-Za-z0-9_-]{11}$/.test(vParam)) {
-        return { type: "video", videoId: vParam };
-      }
       return {
         type: "playlist",
         playlistId: listParam,
@@ -76,7 +72,7 @@ export function parseYouTubeUrl(input: string): ParsedYouTubeInput {
     const vMatch = raw.match(
       /(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/))([A-Za-z0-9_-]{11})/
     );
-    if (plMatch && (!plMatch[1].startsWith("RD") || !vMatch)) {
+    if (plMatch && plMatch[1] !== "WL" && plMatch[1] !== "LL") {
       return { type: "playlist", playlistId: plMatch[1], videoId: vMatch?.[1] };
     }
     if (vMatch) {
@@ -95,6 +91,48 @@ export function extractYouTubeId(input: string): string | null {
   if (parsed.type === "video") return parsed.videoId;
   if (parsed.type === "playlist" && parsed.videoId) return parsed.videoId;
   return null;
+}
+
+/**
+ * Specifically validates if an input is a YouTube playlist.
+ * Returns { isPlaylist: boolean; isSingleVideoOnly: boolean; playlistId?: string }
+ */
+export function validateYouTubePlaylistInput(input: string): {
+  isPlaylist: boolean;
+  isSingleVideoOnly: boolean;
+  playlistId?: string;
+} {
+  const raw = input.trim();
+  if (!raw) return { isPlaylist: false, isSingleVideoOnly: false };
+
+  // If raw playlist ID (e.g. PL..., OLAK..., etc.)
+  if (/^(?:PL|OLAK|UU|FL|RD|LL|WL)[A-Za-z0-9_-]{10,}$/i.test(raw)) {
+    return { isPlaylist: true, isSingleVideoOnly: false, playlistId: raw };
+  }
+
+  try {
+    const url = new URL(raw.startsWith("http") ? raw : `https://${raw}`);
+    const listParam = url.searchParams.get("list");
+    const vParam = url.searchParams.get("v");
+
+    if (listParam && listParam !== "WL" && listParam !== "LL") {
+      return { isPlaylist: true, isSingleVideoOnly: false, playlistId: listParam };
+    }
+
+    if (vParam || url.hostname === "youtu.be" || url.pathname.startsWith("/watch") || url.pathname.startsWith("/shorts/")) {
+      return { isPlaylist: false, isSingleVideoOnly: true };
+    }
+  } catch {
+    const listMatch = raw.match(/[?&]list=([A-Za-z0-9_-]+)/);
+    if (listMatch && listMatch[1] && listMatch[1] !== "WL" && listMatch[1] !== "LL") {
+      return { isPlaylist: true, isSingleVideoOnly: false, playlistId: listMatch[1] };
+    }
+    if (/(?:watch\?v=|youtu\.be\/|shorts\/)/.test(raw)) {
+      return { isPlaylist: false, isSingleVideoOnly: true };
+    }
+  }
+
+  return { isPlaylist: false, isSingleVideoOnly: false };
 }
 
 /**
@@ -157,17 +195,36 @@ export function formatArtistWithPlatform(rawArtist?: string | null): string {
  * e.g. "Despacito ft. Daddy Yankee" -> "Despacito's Playlist"
  */
 export function generatePlaylistNameFromSong(rawTitle?: string | null): string {
-  if (!rawTitle) return "YouTube Playlist";
+  if (
+    !rawTitle ||
+    typeof rawTitle !== "string" ||
+    !rawTitle.trim() ||
+    rawTitle.toLowerCase() === "undefined" ||
+    rawTitle.toLowerCase() === "null" ||
+    rawTitle.toLowerCase() === "undefined name" ||
+    rawTitle.toLowerCase() === "unknown track"
+  ) {
+    return "My Playlist";
+  }
   const { title } = cleanYouTubeTitle(rawTitle);
   const clean = (title || rawTitle).trim();
 
-  // Extract first word/token
+  // Extract first word/token (support Latin, Devanagari, Arabic, Cyrillic, CJK, etc.)
   const words = clean
-    .replace(/^[^a-zA-Z0-9\u0900-\u097F]+/, "") // remove leading non-alphanumeric
-    .split(/[\s\-–—|_()[\]{}.,:;!?'"\/]+/);
-  
-  const firstWord = words.find((w) => w.length > 0);
-  if (!firstWord) return "YouTube Playlist";
+    .replace(/^[^a-zA-Z0-9\u0900-\u097F\u0600-\u06FF\u0400-\u04FF\u4E00-\u9FFF]+/, "")
+    .split(/[\s\-–—|_()[\]{}.,:;!?'"\/\\#@$%^&*+=<>~`]+/);
+
+  const firstWord =
+    words.find((w) => {
+      const trimmed = w.trim();
+      if (!trimmed) return false;
+      const lower = trimmed.toLowerCase();
+      return !["the", "a", "an", "official", "video", "audio", "lyric", "lyrics", "full", "song", "hd", "hq", "4k", "mv", "remix"].includes(lower);
+    }) || words.find((w) => w.trim().length > 0);
+
+  if (!firstWord || firstWord.toLowerCase() === "undefined" || firstWord.toLowerCase() === "null") {
+    return "My Playlist";
+  }
 
   const formatted = firstWord.charAt(0).toUpperCase() + firstWord.slice(1);
   return `${formatted}'s Playlist`;

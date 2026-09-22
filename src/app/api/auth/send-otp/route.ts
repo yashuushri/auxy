@@ -6,6 +6,11 @@ import {
   hashOtp,
   validatePasswordStrength,
 } from "@/lib/otp-store";
+import {
+  getUserByIdentifierFromServerStore,
+  getUserByEmailFromServerStore,
+  getUserFromServerStore,
+} from "@/lib/server-store";
 
 export async function POST(req: NextRequest) {
   try {
@@ -43,6 +48,22 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      const emailTaken = getUserByEmailFromServerStore(cleanEmail);
+      if (emailTaken) {
+        return NextResponse.json(
+          { ok: false, error: "This email is already registered. Please sign in instead." },
+          { status: 400 }
+        );
+      }
+
+      const userTaken = getUserFromServerStore(cleanUsername);
+      if (userTaken) {
+        return NextResponse.json(
+          { ok: false, error: "This username is already taken. Please choose another username." },
+          { status: 400 }
+        );
+      }
+
       // Validate password strength: reject 12345678, counting, repetitive, easy passwords
       if (password) {
         const passCheck = validatePasswordStrength(password);
@@ -52,6 +73,29 @@ export async function POST(req: NextRequest) {
             { status: 400 }
           );
         }
+      }
+    }
+
+    // Login and Forgot-password validations: ensure account actually exists!
+    let existingUser = null;
+    if (mode === "login" || mode === "forgot") {
+      existingUser = getUserByIdentifierFromServerStore(cleanEmail);
+      if (!existingUser && cleanUsername) {
+        existingUser = getUserByIdentifierFromServerStore(cleanUsername);
+      }
+
+      if (!existingUser) {
+        return NextResponse.json(
+          { ok: false, error: "No account found with this email or username. Please check your credentials or register." },
+          { status: 404 }
+        );
+      }
+
+      if (mode === "login" && password && existingUser.password && existingUser.password !== password) {
+        return NextResponse.json(
+          { ok: false, error: "Incorrect password. Please try again." },
+          { status: 400 }
+        );
       }
     }
 
@@ -74,10 +118,12 @@ export async function POST(req: NextRequest) {
     const otp = generate4DigitOtp();
     const hashedOtp = hashOtp(otp);
 
+    const targetUsername = existingUser?.username || cleanUsername || "user";
+
     // Save in OTP store (10 minute expiry, 0 attempts)
     otpStore.set(cleanEmail, {
       email: cleanEmail,
-      username: cleanUsername,
+      username: targetUsername,
       hashedOtp,
       expiresAt: now + 10 * 60 * 1000, // 10 minutes
       attempts: 0,
@@ -86,25 +132,27 @@ export async function POST(req: NextRequest) {
     });
 
     // Send via Brevo Transactional Email
-    const result = await sendOtpEmailViaBrevo({
-      toEmail: cleanEmail,
-      recipientName: cleanUsername || "Listener",
-      otp,
-    });
-
-    if (!result.success) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: result.error || "Failed to deliver email. Please try again.",
-        },
-        { status: 500 }
-      );
+    let emailDelivered = false;
+    try {
+      const result = await sendOtpEmailViaBrevo({
+        toEmail: cleanEmail,
+        recipientName: existingUser?.displayName || targetUsername,
+        otp,
+      });
+      emailDelivered = result.success;
+      if (!result.success) {
+        console.warn("Brevo email warning:", result.error);
+      }
+    } catch (deliveryError) {
+      console.warn("Brevo email exception:", deliveryError);
     }
 
     return NextResponse.json({
       ok: true,
-      message: "Verification code sent to your email.",
+      message: emailDelivered
+        ? "Verification code sent to your email."
+        : "Verification code generated.",
+      emailDelivered,
       expiresInMinutes: 10,
     });
   } catch (error) {

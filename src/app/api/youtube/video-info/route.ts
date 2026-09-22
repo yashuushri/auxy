@@ -7,6 +7,8 @@ import {
   getPrimaryArtist,
 } from "@/lib/youtube";
 
+export const dynamic = "force-dynamic";
+
 interface VideoMetadata {
   videoId: string;
   title: string;
@@ -27,7 +29,7 @@ async function fetchSingleVideoMetadata(videoId: string): Promise<VideoMetadata>
 
   try {
     const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
-    const res = await fetch(oembedUrl, { next: { revalidate: 86400 } });
+    const res = await fetch(oembedUrl, { cache: "no-store" });
     if (res.ok) {
       const data = await res.json();
       const rawTitle = data.title || `Track ${videoId}`;

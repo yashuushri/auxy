@@ -15,10 +15,10 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Auxy",
-  description: "Auxy music room with Firebase authentication, Firestore sync, and YouTube playlists.",
+  description: "Auxy music room with Supabase Realtime synchronization, PostgreSQL persistence, and YouTube playlists.",
   openGraph: {
     title: "Auxy",
-    description: "Auxy music room with Firebase authentication, Firestore sync, and YouTube playlists.",
+    description: "Auxy music room with Supabase Realtime synchronization, PostgreSQL persistence, and YouTube playlists.",
   },
   icons: {
     icon: "/logo.png",
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html
       lang="en"
