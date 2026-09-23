@@ -53,6 +53,11 @@ const nextConfig: NextConfig = {
         hostname: "images.emojiterra.com",
         pathname: "/**",
       },
+      {
+        protocol: "https",
+        hostname: "i.pinimg.com",
+        pathname: "/**",
+      },
     ],
   },
   async rewrites() {

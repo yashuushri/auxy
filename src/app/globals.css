@@ -193,6 +193,26 @@
   scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
 }
 
+/* Ultra Slim Transparent Scrollbar */
+.ultra-slim-scrollbar::-webkit-scrollbar {
+  width: 2.5px;
+  height: 2.5px;
+}
+.ultra-slim-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.ultra-slim-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
+}
+.ultra-slim-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+.ultra-slim-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+}
+
 .glass-window {
   background: rgb(10 10 16 / 52%);
   color: white;

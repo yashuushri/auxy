@@ -29,6 +29,7 @@ import {
 } from "@/lib/supabase-db";
 import type { UserAccount } from "@/lib/types";
 import { sendDiscordNotification } from "@/lib/discord";
+import { sendActivityLog } from "@/lib/activity-logger";
 
 type UserPatch = Partial<UserAccount> | ((current: UserAccount) => UserAccount);
 
@@ -297,6 +298,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         email: existing.email || email,
       });
 
+      // Activity log to Discord (zero database calls)
+      sendActivityLog({
+        action: "user_login",
+        user: existing,
+        metadata: {
+          username: existing.username,
+          displayName: userDisplayName,
+        },
+      });
+
       toast.success(`Welcome back, ${userDisplayName}!`);
       return { success: true };
     },
@@ -367,6 +378,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             type: "register",
             username: localUser.username,
             email: cleanEmail,
+          });
+
+          sendActivityLog({
+            action: "user_register",
+            user: localUser,
+            metadata: {
+              username: localUser.username,
+              displayName: localUser.displayName || localUser.username,
+            },
           });
 
           toast.success(`Account created! Welcome, ${localUser.username}!`);
@@ -453,11 +473,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       username: guestAccount.username,
     });
 
+    sendActivityLog({
+      action: "user_login",
+      user: guestAccount,
+      metadata: {
+        username: guestAccount.username,
+        isGuest: true,
+      },
+    });
+
     toast.success(`Entered as ${guestAccount.displayName}`);
   }, []);
 
   const logoutHandler = useCallback(async () => {
     const prevUsername = user?.username || "A user";
+    const prevUser = user;
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     if (user) {
       saveUser(user);
@@ -474,6 +504,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       type: "logout",
       username: prevUsername,
     });
+
+    if (prevUser) {
+      sendActivityLog({
+        action: "user_logout",
+        user: prevUser,
+      });
+    }
 
     toast.success("Signed out");
   }, [user]);

@@ -22,6 +22,7 @@ import {
 } from "@/lib/backgrounds";
 import type { Background, BackgroundMetadata } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
 type RoomTab = "live" | "liquid";
 
@@ -60,7 +61,14 @@ const LiveShaderCard = memo(function LiveShaderCard({
   const effectivePoster =
     shader.posterUrl ||
     (() => {
-      const lower = shader.url.toLowerCase();
+      const lower = (shader.url || "").toLowerCase();
+      const lowerName = (shader.name || "").toLowerCase();
+      if (lower.includes("tokyo-lights") || lower.includes("tower") || lowerName.includes("tower")) return "/videos/tokyo-lights-poster.jpg";
+      if (lower.includes("cyberpunk-street") || lower.includes("cyber") || lowerName.includes("cyber")) return "/videos/cyberpunk-street-poster.jpg";
+      if (lower.includes("aurora-borealis") || lower.includes("aurora") || lowerName.includes("aurora")) return "/videos/aurora-borealis-poster.jpg";
+      if (lower.includes("lofi-room") || lower.includes("lofi") || lowerName.includes("lofi") || lowerName.includes("study")) return "/videos/lofi-room-poster.jpg";
+      if (lower.includes("galaxy-anime") || lower.includes("galaxy") || lowerName.includes("galaxy") || lowerName.includes("cosmic")) return "/videos/galaxy-anime-poster.jpg";
+      if (lower.includes("elysia-lunar") || lower.includes("lunar") || lower.includes("elysia") || lowerName.includes("lunar")) return "/videos/elysia-lunar-poster.jpg";
       if (lower.includes("hololive") || lower.includes("okayu")) return "/thumbnails/hololive.jpg";
       if (lower.includes("pool")) return "/thumbnails/pool.jpg";
       if (lower.includes("miku")) return "/thumbnails/hatsune-miku.jpg";
@@ -288,7 +296,7 @@ export function SettingsDialog({
         const res = await fetch("/api/backgrounds");
         if (res.ok) {
           const data = await res.json();
-          if (data.backgrounds && Array.isArray(data.backgrounds) && active) {
+          if (data.backgrounds && Array.isArray(data.backgrounds) && data.backgrounds.length > 0 && active) {
             const mapped: LiveShader[] = data.backgrounds.map((bg: BackgroundMetadata) => ({
               id: bg.id,
               name: bg.name,
@@ -299,6 +307,8 @@ export function SettingsDialog({
               lightAccent: "#818cf8",
             }));
             setDynamicShaders(mapped);
+          } else if (active) {
+            setDynamicShaders(DEFAULT_LIVE_SHADERS);
           }
         }
       } catch {
@@ -452,14 +462,15 @@ export function SettingsDialog({
                       isSelected={isSelected}
                       onHoverStart={handleCardHoverStart}
                       onHoverEnd={handleCardHoverEnd}
-                      onSelect={() =>
+                      onSelect={() => {
                         setBackground({
                           kind: "video",
                           value: shader.url,
                           name: shader.name,
                           posterUrl: shader.posterUrl,
-                        })
-                      }
+                        });
+                        toast.success(`Applied ${shader.name} live shader`);
+                      }}
                       onConfirm={() => onOpenChange(false)}
                     />
                   );

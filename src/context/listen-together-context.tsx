@@ -34,8 +34,9 @@ import {
   type ConnectionStatus,
   type ListenTogetherLiveEvent,
 } from "@/lib/supabase-realtime";
-import { LIVE_SHADERS } from "@/lib/backgrounds";
+import { resolveLiveShader } from "@/lib/backgrounds";
 import type { Background, Room, RoomParticipant, RoomRequest, Track } from "@/lib/types";
+import { sendActivityLog } from "@/lib/activity-logger";
 
 interface ListenTogetherContextValue {
   isHost: boolean;
@@ -304,21 +305,22 @@ export function ListenTogetherProvider({ children }: { children: React.ReactNode
           setHostTracks(playlistTracks);
         }
 
-        // 1. Background Change (Sync tiny background reference)
+        // 1. Background Change (Sync background reference)
         if (type === "BACKGROUND_CHANGE" || background || liveEvent.backgroundId) {
           if (background) {
             setLiveBackground(background);
           } else if (liveEvent.backgroundId) {
             const bgId = liveEvent.backgroundId;
-            const matchedShader = LIVE_SHADERS.find(
-              (s) => s.id === bgId || s.url === bgId
-            );
+            const matchedShader = resolveLiveShader({ kind: "video", value: bgId });
             if (matchedShader) {
               setLiveBackground({
                 kind: "video",
                 value: matchedShader.url,
                 name: matchedShader.name,
+                posterUrl: matchedShader.posterUrl,
               });
+            } else if (bgId.startsWith("http://") || bgId.startsWith("https://") || bgId.endsWith(".mp4") || bgId.endsWith(".webm")) {
+              setLiveBackground({ kind: "video", value: bgId, name: "Live Shader" });
             } else {
               setLiveBackground({ kind: "preset", value: bgId });
             }
@@ -681,6 +683,16 @@ export function ListenTogetherProvider({ children }: { children: React.ReactNode
     hasConfirmedPresenceRef.current = false;
     lastAppliedVersionRef.current = 0;
     setActiveHostUsername(hostUsername);
+
+    // Discord Activity Log (zero DB calls)
+    sendActivityLog({
+      action: "listener_joined",
+      user: latestUserRef.current,
+      metadata: {
+        hostUsername,
+      },
+    });
+
     if (typeof window !== "undefined") {
       try {
         sessionStorage.setItem("auxy_listening_host", hostUsername);
@@ -749,17 +761,30 @@ export function ListenTogetherProvider({ children }: { children: React.ReactNode
   }, []);
 
   const leaveListenTogether = useCallback(async () => {
+    const prevHost = activeHostUsername;
     setActiveHostUsername(null);
     setLiveBackground(null);
     setHostTracks([]);
     latestPlayerRef.current.clearRemoteTrack();
+
+    if (prevHost) {
+      // Discord Activity Log (zero DB calls)
+      sendActivityLog({
+        action: "listener_left",
+        user: latestUserRef.current,
+        metadata: {
+          hostUsername: prevHost,
+        },
+      });
+    }
+
     if (typeof window !== "undefined") {
       try {
         sessionStorage.removeItem("auxy_listening_host");
       } catch {}
     }
     toast.info("Returned to your room");
-  }, []);
+  }, [activeHostUsername]);
 
   const broadcastSeek = useCallback(
     (position: number) => {

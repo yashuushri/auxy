@@ -44,8 +44,12 @@ function extractTracksAndContinuation(node: unknown): {
         playlistTitle = t?.simpleText || t?.runs?.[0]?.text;
       }
     }
+    if (!playlistTitle && rec.microformatDataRenderer) {
+      const md = rec.microformatDataRenderer as Record<string, unknown>;
+      if (typeof md.title === "string") playlistTitle = md.title;
+    }
 
-    // Standard YouTube playlist video renderer
+    // 1. Standard YouTube playlist video renderer
     if (rec.playlistVideoRenderer) {
       const pvr = rec.playlistVideoRenderer as Record<string, unknown>;
       const vid = pvr.videoId as string | undefined;
@@ -78,7 +82,85 @@ function extractTracksAndContinuation(node: unknown): {
       }
     }
 
-    // Playlist panel video renderer (used in YouTube Mixes, Radios, and watch playlists)
+    // 2. Modern YouTube Lockup View Model (used in newest YouTube Web UI)
+    if (rec.lockupViewModel) {
+      const l = rec.lockupViewModel as Record<string, unknown>;
+      const vid = l.contentId as string | undefined;
+
+      if (vid && /^[A-Za-z0-9_-]{11}$/.test(vid) && !seenIds.has(vid)) {
+        seenIds.add(vid);
+
+        const metadata = l.metadata as Record<string, unknown> | undefined;
+        const lockupMeta = metadata?.lockupMetadataViewModel as Record<string, unknown> | undefined;
+        const titleObj = lockupMeta?.title as { content?: string } | undefined;
+        const rawVideoTitle = titleObj?.content || "";
+
+        let rawArtist = "YouTube";
+        const contentMeta = lockupMeta?.metadata as Record<string, unknown> | undefined;
+        const cmvm = contentMeta?.contentMetadataViewModel as Record<string, unknown> | undefined;
+        const metadataRows = cmvm?.metadataRows as Array<Record<string, unknown>> | undefined;
+        if (Array.isArray(metadataRows) && metadataRows.length > 0) {
+          const parts = metadataRows[0]?.metadataParts as Array<Record<string, unknown>> | undefined;
+          if (Array.isArray(parts) && parts.length > 0) {
+            const textObj = parts[0]?.text as { content?: string } | undefined;
+            if (textObj?.content) rawArtist = textObj.content;
+          }
+        }
+
+        const { title: cleanT, artist: cleanA } = rawVideoTitle
+          ? cleanYouTubeTitle(rawVideoTitle)
+          : { title: `Track ${tracks.length + 1}`, artist: rawArtist };
+
+        const finalArtist = cleanA && cleanA !== "YouTube" ? cleanA : getPrimaryArtist(rawArtist);
+
+        tracks.push({
+          videoId: vid,
+          title: cleanT || rawVideoTitle || `Track ${tracks.length + 1}`,
+          artist: finalArtist || "YouTube",
+          duration: 0,
+          cover: `https://img.youtube.com/vi/${vid}/hqdefault.jpg`,
+        });
+      }
+    }
+
+    // 3. Compact video renderer
+    if (rec.compactVideoRenderer) {
+      const cvr = rec.compactVideoRenderer as Record<string, unknown>;
+      const vid = cvr.videoId as string | undefined;
+
+      if (vid && /^[A-Za-z0-9_-]{11}$/.test(vid) && !seenIds.has(vid)) {
+        seenIds.add(vid);
+
+        const titleObj = cvr.title as { runs?: Array<{ text?: string }>; simpleText?: string } | undefined;
+        const rawVideoTitle = titleObj?.runs?.[0]?.text || titleObj?.simpleText || "";
+
+        const bylineObj = (cvr.shortBylineText || cvr.longBylineText) as { runs?: Array<{ text?: string }>; simpleText?: string } | undefined;
+        const rawArtist = bylineObj?.runs?.[0]?.text || bylineObj?.simpleText || "YouTube";
+
+        const lengthSecStr = cvr.lengthText as { runs?: Array<{ text?: string }>; simpleText?: string } | undefined;
+        const lengthText = lengthSecStr?.simpleText || lengthSecStr?.runs?.[0]?.text || "";
+        let duration = 0;
+        if (lengthText) {
+          const parts = lengthText.split(":").map((p) => parseInt(p, 10) || 0);
+          if (parts.length === 2) duration = parts[0] * 60 + parts[1];
+          else if (parts.length === 3) duration = parts[0] * 3600 + parts[1] * 60 + parts[2];
+        }
+
+        const { title: cleanT, artist: cleanA } = rawVideoTitle
+          ? cleanYouTubeTitle(rawVideoTitle)
+          : { title: `Track ${tracks.length + 1}`, artist: rawArtist };
+
+        tracks.push({
+          videoId: vid,
+          title: cleanT || rawVideoTitle || `Track ${tracks.length + 1}`,
+          artist: cleanA || getPrimaryArtist(rawArtist),
+          duration,
+          cover: `https://img.youtube.com/vi/${vid}/hqdefault.jpg`,
+        });
+      }
+    }
+
+    // 4. Playlist panel video renderer (used in YouTube Mixes, Radios, and watch playlists)
     if (rec.playlistPanelVideoRenderer) {
       const ppvr = rec.playlistPanelVideoRenderer as Record<string, unknown>;
       const vid = ppvr.videoId as string | undefined;
@@ -115,7 +197,7 @@ function extractTracksAndContinuation(node: unknown): {
       }
     }
 
-    // Music YouTube list item renderer (for music.youtube.com playlists)
+    // 5. Music YouTube list item renderer (for music.youtube.com playlists)
     if (rec.musicResponsiveListItemRenderer) {
       const mrli = rec.musicResponsiveListItemRenderer as Record<string, unknown>;
       const navEndpoint = mrli.navigationEndpoint as Record<string, unknown> | undefined;
@@ -154,7 +236,7 @@ function extractTracksAndContinuation(node: unknown): {
       }
     }
 
-    // Continuation token for loading subsequent batches of 100 tracks
+    // Continuation token for loading subsequent batches of tracks
     if (!nextContinuationToken && rec.continuationItemRenderer) {
       const cir = rec.continuationItemRenderer as Record<string, unknown>;
       const endpoint = cir.continuationEndpoint as Record<string, unknown> | undefined;
@@ -308,8 +390,8 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // --- Strategy 2: Innertube Browse API with full pagination (For PL, OLAK, UU, etc.) ---
-    if (playlistId && allTracks.length === 0) {
+    // --- Strategy 2: Innertube Browse API with full pagination (For standard playlists) ---
+    if (playlistId) {
       try {
         const browseId = playlistId.startsWith("VL") ? playlistId : `VL${playlistId}`;
         
@@ -341,13 +423,13 @@ export async function GET(req: NextRequest) {
           const data = await innertubeRes.json();
           const p1 = extractTracksAndContinuation(data);
           appendUniqueTracks(p1.tracks);
-          if (p1.playlistTitle) playlistTitle = p1.playlistTitle;
+          if (p1.playlistTitle && !playlistTitle) playlistTitle = p1.playlistTitle;
 
           let continuationToken = p1.nextContinuationToken;
           let pageCount = 1;
 
-          // Fetch continuation pages (up to 10 pages = 1000 tracks)
-          while (continuationToken && pageCount < 10) {
+          // Fetch continuation pages (up to 20 pages = 2000 tracks)
+          while (continuationToken && pageCount < 20) {
             pageCount++;
             try {
               const contRes = await fetch("https://www.youtube.com/youtubei/v1/browse?prettyPrint=false", {
@@ -376,9 +458,10 @@ export async function GET(req: NextRequest) {
               if (contRes.ok) {
                 const contData = await contRes.json();
                 const pNext = extractTracksAndContinuation(contData);
+                const prevCount = allTracks.length;
                 appendUniqueTracks(pNext.tracks);
                 continuationToken = pNext.nextContinuationToken;
-                if (!pNext.tracks.length) break;
+                if (allTracks.length === prevCount) break;
               } else {
                 break;
               }
@@ -390,6 +473,47 @@ export async function GET(req: NextRequest) {
         }
       } catch (innertubeErr) {
         console.warn("[Playlist Info API] Innertube Strategy failed:", innertubeErr);
+      }
+    }
+
+    // --- Strategy 2b: Complement with Next API if we have at least one track or playlistId ---
+    if (playlistId && allTracks.length > 0) {
+      try {
+        const firstVid = allTracks[0]?.videoId;
+        const nextBody: Record<string, unknown> = {
+          context: {
+            client: {
+              clientName: "WEB",
+              clientVersion: "2.20240101.00.00",
+              hl: "en",
+              gl: "US",
+            },
+          },
+          playlistId,
+        };
+        if (firstVid) nextBody.videoId = firstVid;
+
+        const nextRes = await fetch("https://www.youtube.com/youtubei/v1/next?prettyPrint=false", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "X-YouTube-Client-Name": "1",
+            "X-YouTube-Client-Version": "2.20240101.00.00",
+          },
+          body: JSON.stringify(nextBody),
+          cache: "no-store",
+        });
+
+        if (nextRes.ok) {
+          const data = await nextRes.json();
+          const pNext = extractTracksAndContinuation(data);
+          appendUniqueTracks(pNext.tracks);
+          if (pNext.playlistTitle && !playlistTitle) playlistTitle = pNext.playlistTitle;
+        }
+      } catch (compErr) {
+        console.warn("[Playlist Info API] Complementary Next API fetch failed:", compErr);
       }
     }
 
@@ -418,7 +542,7 @@ export async function GET(req: NextRequest) {
           if (titleMatch && titleMatch[1]) {
             const rawTitle = titleMatch[1].replace(/- YouTube$/i, "").trim();
             if (rawTitle && !rawTitle.toLowerCase().includes("error 404") && !rawTitle.toLowerCase().includes("not found")) {
-              playlistTitle = rawTitle;
+              if (!playlistTitle) playlistTitle = rawTitle;
             }
           }
 
@@ -502,7 +626,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // --- Strategy 3: YouTube RSS Feed fallback ---
+    // --- Strategy 4: YouTube RSS Feed fallback ---
     if (playlistId && allTracks.length === 0) {
       try {
         const rssRes = await fetch(`https://www.youtube.com/feeds/videos.xml?playlist_id=${playlistId}`, {
@@ -533,7 +657,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // --- Strategy 4: Fallback to Single Video ID if input was a single video ---
+    // --- Strategy 5: Fallback to Single Video ID if input was a single video ---
     if (allTracks.length === 0 && singleVideoId && /^[A-Za-z0-9_-]{11}$/.test(singleVideoId)) {
       seenVideoIds.add(singleVideoId);
       allTracks.push({
@@ -599,6 +723,10 @@ export async function GET(req: NextRequest) {
       ? (suggestedPlaylistName || "My Playlist")
       : playlistTitle;
 
+    // Cap playlist tracks to maximum 100 as per specification
+    const cappedTracks = allTracks.slice(0, 100);
+    const cappedVideoIds = extractedVideoIds.slice(0, 100);
+
     return NextResponse.json({
       ok: true,
       playlistId: playlistId || `single-${firstVid}`,
@@ -610,9 +738,9 @@ export async function GET(req: NextRequest) {
         artist: firstTrackArtist,
         cover: `https://img.youtube.com/vi/${firstVid}/hqdefault.jpg`,
       },
-      tracks: allTracks,
-      videoIds: extractedVideoIds,
-      count: allTracks.length,
+      tracks: cappedTracks,
+      videoIds: cappedVideoIds,
+      count: cappedTracks.length,
     });
   } catch (err) {
     console.error("[Playlist Info API] Error:", err);

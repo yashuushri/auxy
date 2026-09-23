@@ -84,6 +84,30 @@ function RoomBackgroundComponent({
     } catch {}
   }, []);
 
+  const safelyPlayVideo = useCallback((video: HTMLVideoElement | null) => {
+    if (!video) return;
+    try {
+      video.muted = true;
+      video.defaultMuted = true;
+      video.playsInline = true;
+      const playPromise = video.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(() => {
+          // Retry playback on user gesture if autoplay was throttled
+        });
+      }
+    } catch {}
+  }, []);
+
+  // Proactively ensure slot videos play when updated
+  useEffect(() => {
+    if (activeSlot === "A" && videoRefA.current) {
+      safelyPlayVideo(videoRefA.current);
+    } else if (activeSlot === "B" && videoRefB.current) {
+      safelyPlayVideo(videoRefB.current);
+    }
+  }, [activeSlot, slotA?.src, slotB?.src, safelyPlayVideo]);
+
   // 2. Video Source Management with Zero-Flash Seamless Handover
   useEffect(() => {
     if (!isVideoMedia || !resolvedValue) {
@@ -260,7 +284,7 @@ function RoomBackgroundComponent({
                 src={effectivePoster}
                 alt="Background Poster"
                 decoding="async"
-                className="size-full object-cover opacity-60"
+                className="size-full object-cover opacity-95 transition-opacity duration-300"
               />
             </div>
           )}
@@ -275,10 +299,20 @@ function RoomBackgroundComponent({
               loop
               muted
               playsInline
-              preload="metadata"
+              preload="auto"
               disablePictureInPicture
-              onCanPlay={handleSlotAReady}
+              onLoadedData={() => {
+                handleSlotAReady();
+                safelyPlayVideo(videoRefA.current);
+              }}
+              onCanPlay={() => {
+                handleSlotAReady();
+                safelyPlayVideo(videoRefA.current);
+              }}
               onPlaying={handleSlotAReady}
+              onError={() => {
+                handleSlotAReady();
+              }}
               className={`absolute inset-0 size-full object-cover transition-opacity duration-500 ease-out ${
                 activeSlot === "A" && isSlotALoaded ? "opacity-100" : "opacity-0"
               }`}
@@ -295,10 +329,20 @@ function RoomBackgroundComponent({
               loop
               muted
               playsInline
-              preload="metadata"
+              preload="auto"
               disablePictureInPicture
-              onCanPlay={handleSlotBReady}
+              onLoadedData={() => {
+                handleSlotBReady();
+                safelyPlayVideo(videoRefB.current);
+              }}
+              onCanPlay={() => {
+                handleSlotBReady();
+                safelyPlayVideo(videoRefB.current);
+              }}
               onPlaying={handleSlotBReady}
+              onError={() => {
+                handleSlotBReady();
+              }}
               className={`absolute inset-0 size-full object-cover transition-opacity duration-500 ease-out ${
                 activeSlot === "B" && isSlotBLoaded ? "opacity-100" : "opacity-0"
               }`}

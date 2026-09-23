@@ -94,8 +94,8 @@ export function ProfileDialog({
   async function handleSave() {
     if (!user) return;
     const trimmedName = displayName.trim() || user.username;
-    if (trimmedName.length > 50) {
-      toast.error("Display name must be 50 characters or less.");
+    if (trimmedName.length > 12) {
+      toast.error("Display name must be 12 characters or less.");
       return;
     }
     if (!isValidDisplayName(trimmedName)) {
@@ -219,21 +219,21 @@ export function ProfileDialog({
 
         {/* Input Fields */}
         <div className="mt-4 space-y-3.5">
-          {/* Display Name with 50-character limit */}
+          {/* Display Name with 12-character limit */}
           <div>
             <div className="flex items-center justify-between mb-1">
               <label htmlFor="profile-display-name" className="block text-xs font-semibold text-white/80">
                 Display Name
               </label>
-              <span className="text-[11px] text-white/40">{displayName.length}/50</span>
+              <span className="text-[11px] text-white/40">{displayName.length}/12</span>
             </div>
             <input
               id="profile-display-name"
               type="text"
               value={displayName}
-              onChange={(e) => setDisplayName(e.target.value.slice(0, 50))}
-              placeholder={user.username}
-              maxLength={50}
+              onChange={(e) => setDisplayName(e.target.value.slice(0, 12))}
+              placeholder={user.username.slice(0, 12)}
+              maxLength={12}
               className="w-full h-10 px-3 rounded-xl border border-white/15 bg-white/5 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-white/40 focus:ring-1 focus:ring-white/40"
             />
           </div>

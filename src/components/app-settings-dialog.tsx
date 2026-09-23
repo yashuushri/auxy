@@ -442,9 +442,6 @@ export function AppSettingsDialog({
                         </span>
                       </div>
                     </div>
-                    <span className="text-[10px] uppercase font-bold tracking-wider text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md">
-                      Active
-                    </span>
                   </div>
                 </div>
               </>

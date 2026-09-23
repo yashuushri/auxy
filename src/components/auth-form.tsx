@@ -125,8 +125,8 @@ export function AuthForm({
         return;
       }
 
-      if (cleanUser.length < 2 || cleanUser.length > 32) {
-        setErrorMsg("Username must be between 2 and 32 characters.");
+      if (cleanUser.length < 2 || cleanUser.length > 16) {
+        setErrorMsg("Username must be between 2 and 16 characters.");
         return;
       }
 
@@ -675,10 +675,11 @@ export function AuthForm({
                   id="auth-username"
                   type="text"
                   required
+                  maxLength={16}
                   autoComplete="username"
                   value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="Choose username"
+                  onChange={(e) => setUsername(e.target.value.slice(0, 16))}
+                  placeholder="Choose username (max 16)"
                   className="w-full h-8 sm:h-10 px-2.5 sm:px-3.5 rounded-md sm:rounded-lg bg-[#1a1a1d] border border-neutral-800 text-xs sm:text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-500 transition-colors"
                 />
               </div>

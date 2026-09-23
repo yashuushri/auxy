@@ -851,10 +851,10 @@ export function SpotifyWindow() {
               <Input
                 type="url"
                 required
-                placeholder="https://www.youtube.com/watch?v=... or playlist?list=..."
+                placeholder="Paste any Youtube link"
                 value={ytUrl}
                 onChange={(event) => setYtUrl(event.target.value)}
-                className="bg-white/5 border-white/10 text-white placeholder:text-neutral-500 text-xs"
+                className="bg-white/5 border-white/10 text-white placeholder:text-white/20 text-xs"
               />
               <p className="text-[10px] text-white/35">
                 {detectedType === "playlist"
@@ -867,10 +867,10 @@ export function SpotifyWindow() {
             <div className="flex flex-col gap-1.5">
               <Label className="text-xs text-neutral-300">Custom Title (optional)</Label>
               <Input
-                placeholder="Leave blank to auto-detect title from YouTube"
+                placeholder="leave blank"
                 value={customTitle}
                 onChange={(event) => setCustomTitle(event.target.value)}
-                className="bg-white/5 border-white/10 text-white placeholder:text-neutral-500 text-xs"
+                className="bg-white/5 border-white/10 text-white placeholder:text-white/20 text-xs"
               />
             </div>
             <DialogFooter className="pt-2">

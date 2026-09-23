@@ -161,14 +161,14 @@ export function EditPanel() {
             <Label htmlFor="displayName" className="text-white text-xs">
               Display name
             </Label>
-            <span className="text-[10px] text-white/40">{displayName.length}/50</span>
+            <span className="text-[10px] text-white/40">{displayName.length}/12</span>
           </div>
           <Input
             id="displayName"
             value={displayName}
-            onChange={(event) => setDisplayName(event.target.value.slice(0, 50))}
-            maxLength={50}
-            placeholder={user.username}
+            onChange={(event) => setDisplayName(event.target.value.slice(0, 12))}
+            maxLength={12}
+            placeholder={user.username.slice(0, 12)}
             className="border-white/25 bg-black/20 text-white placeholder:text-white/40 h-8 text-xs"
           />
         </div>

@@ -21,6 +21,7 @@ import {
   parseYouTubeUrl,
 } from "@/lib/youtube";
 import type { LoopMode, PlaybackState, Playlist, Track } from "@/lib/types";
+import { sendActivityLog } from "@/lib/activity-logger";
 
 type PlayerContextValue = {
   tracks: Track[];
@@ -185,6 +186,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     }
     if (!activePlaylist) return library;
     return activePlaylist.trackIds
+      .slice(0, 100)
       .map((id) => library.find((track) => track.id === id))
       .filter((track): track is Track => Boolean(track));
   }, [activePlaylistId, activePlaylist, library]);
@@ -961,7 +963,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           return {
             ...playlist,
             name: finalName,
-            trackIds: Array.from(new Set([...playlist.trackIds, ...incoming.map((track) => track.id)])),
+            trackIds: Array.from(new Set([...playlist.trackIds, ...incoming.map((track) => track.id)])).slice(0, 100),
             cover: incoming[0]?.cover || playlist.cover,
           };
         });
@@ -1082,7 +1084,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           if (pl.youtubePlaylistId === playlistId || pl.id === `yt-pl-${playlistId}` || pl.id === playlistId) {
             return {
               ...pl,
-              trackIds: Array.from(new Set([...pl.trackIds, ...trackIdsToAdd])),
+              trackIds: Array.from(new Set([...pl.trackIds, ...trackIdsToAdd])).slice(0, 100),
               cover: pl.cover || `https://img.youtube.com/vi/${cleanIds[0]}/hqdefault.jpg`,
             };
           }
@@ -1246,7 +1248,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           : suggestedName || data.title || "My Playlist";
 
         const uniquePlId = `pl-yt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-        const videoIds: string[] = data.videoIds;
+        const videoIds: string[] = (data.videoIds || []).slice(0, 100);
 
         const tracksMetaMap = new Map<
           string,
@@ -1323,6 +1325,16 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         toast.success(`Created "${resolvedName}" with ${videoIds.length} tracks!`);
 
+        // Log playlist import activity (Zero DB calls)
+        sendActivityLog({
+          action: "playlist_imported",
+          user,
+          metadata: {
+            playlistName: resolvedName,
+            trackCount: videoIds.length,
+          },
+        });
+
         // Only queue background resolution for tracks that actually lack proper titles
         const unresolvedVids = videoIds.filter((vid) => {
           const meta = tracksMetaMap.get(vid);
@@ -1341,7 +1353,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         return null;
       }
     },
-    [setActivePlaylistId, updateUser]
+    [setActivePlaylistId, updateUser, user]
   );
 
   const saveYouTubePlaylist = useCallback(
@@ -1432,6 +1444,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             return { ...playlist, trackIds: playlist.trackIds.filter((id) => id !== trackId) };
           }
           if (playlist.id === toPlaylistId && !playlist.trackIds.includes(trackId)) {
+            if (playlist.trackIds.length >= 100) return playlist;
             return { ...playlist, trackIds: [...playlist.trackIds, trackId] };
           }
           return playlist;

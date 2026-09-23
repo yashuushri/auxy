@@ -105,7 +105,7 @@ export function FloatingWindow({
 }: FloatingWindowProps) {
   const [pos, setPos] = useState({ x: defaultX, y: defaultY });
   const [size, setSize] = useState({ width: defaultWidth, height: defaultHeight });
-  const [zIndex, setZIndex] = useState(20);
+  const [zIndex, setZIndex] = useState(30);
   const [minimized, setMinimized] = useState(false);
   const [maximized, setMaximized] = useState(false);
   const [viewport, setViewport] = useState({ width: 1280, height: 720 });

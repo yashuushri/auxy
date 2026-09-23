@@ -92,15 +92,15 @@ export function saveUser(user: UserAccount) {
 }
 
 export function isValidUsername(username: string): boolean {
-  // STRICT: only letters (a-z, A-Z) and numbers (0-9). NO symbols (- _ + . etc), NO spaces.
+  // STRICT: only letters (a-z, A-Z) and numbers (0-9). NO symbols (- _ + . etc), NO spaces. Max 16 chars.
   const trimmed = username.trim();
-  return /^[a-zA-Z0-9]{2,32}$/.test(trimmed);
+  return /^[a-zA-Z0-9]{2,16}$/.test(trimmed);
 }
 
 export function isValidDisplayName(displayName: string): boolean {
-  // Display name can have letters, numbers, and spaces. NO special characters/symbols (%$&@# etc.)
+  // Display name can have letters, numbers, and spaces. Max 12 characters. NO special symbols.
   const trimmed = displayName.trim();
-  if (trimmed.length < 1 || trimmed.length > 50) return false;
+  if (trimmed.length < 1 || trimmed.length > 12) return false;
   return /^[a-zA-Z0-9 ]+$/.test(displayName);
 }
 
