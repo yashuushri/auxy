@@ -76,6 +76,73 @@ export function isTableMarkedMissing(tableName: string): boolean {
 // ============================================================================
 
 /**
+ * Lightweight, direct profile persistence (only username, displayName, avatar, bio, pronouns, background, volume).
+ * Does NOT sync or re-upload entire playlist or track libraries.
+ */
+export async function syncUserProfileOnly(user: {
+  id?: string;
+  username: string;
+  displayName?: string;
+  avatar?: string;
+  bio?: string;
+  pronouns?: string;
+  background?: Background;
+  volume?: number;
+}): Promise<boolean> {
+  const supabase = getSupabase();
+  if (!supabase || !user || !user.username) return false;
+
+  const username = cleanUsername(user.username);
+  const userId = user.id || username;
+  const bg = user.background || DEFAULT_BACKGROUND;
+
+  try {
+    const profileRow = {
+      id: userId,
+      username,
+      display_name: user.displayName || user.username,
+      avatar: user.avatar || "",
+      bio: user.bio || "",
+      pronouns: user.pronouns || "",
+      background_id: bg.value || "lava",
+      background_metadata: bg,
+      volume: typeof user.volume === "number" ? (user.volume > 1 ? user.volume / 100 : user.volume) : 1.0,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error: profileError } = await supabase
+      .from("profiles")
+      .upsert(profileRow, { onConflict: "id" });
+
+    if (profileError) {
+      if (isTableMissingError(profileError)) return false;
+      const { error: retryError } = await supabase
+        .from("profiles")
+        .upsert(profileRow, { onConflict: "username" });
+      if (retryError) {
+        await supabase
+          .from("profiles")
+          .update({
+            display_name: profileRow.display_name,
+            avatar: profileRow.avatar,
+            bio: profileRow.bio,
+            pronouns: profileRow.pronouns,
+            background_id: profileRow.background_id,
+            background_metadata: profileRow.background_metadata,
+            volume: profileRow.volume,
+            updated_at: profileRow.updated_at,
+          })
+          .eq("username", username);
+      }
+    }
+    return true;
+  } catch (err) {
+    console.warn("[Supabase DB] syncUserProfileOnly error:", err);
+    return false;
+  }
+}
+
+/**
  * Normalizes user account data into Supabase PostgreSQL.
  * Profiles, Playlists, Tracks, and Playlist_Tracks are stored in relational tables.
  * Only syncs when user data has actually changed.
@@ -98,51 +165,10 @@ export async function normalizeAndSyncUserProfileToSupabase(
   }
 
   const userId = user.id || cleanUsername(user.username);
-  const username = cleanUsername(user.username);
-  const bg = user.background || DEFAULT_BACKGROUND;
 
   try {
-    // 1. Upsert Profile
-    const profileRow = {
-      id: userId,
-      username,
-      display_name: user.displayName || user.username,
-      avatar: user.avatar || "",
-      bio: user.bio || "",
-      pronouns: user.pronouns || "",
-      background_id: bg.value || "lava",
-      background_metadata: bg,
-      updated_at: new Date().toISOString(),
-    };
-
-    let { error: profileError } = await supabase
-      .from("profiles")
-      .upsert(profileRow, { onConflict: "id" });
-
-    if (profileError) {
-      if (isTableMissingError(profileError)) {
-        return false;
-      }
-      // Retry upsert by username if id conflict happened
-      const { error: retryError } = await supabase
-        .from("profiles")
-        .upsert(profileRow, { onConflict: "username" });
-      if (retryError) {
-        // Direct update by username
-        await supabase
-          .from("profiles")
-          .update({
-            display_name: profileRow.display_name,
-            avatar: profileRow.avatar,
-            bio: profileRow.bio,
-            pronouns: profileRow.pronouns,
-            background_id: profileRow.background_id,
-            background_metadata: profileRow.background_metadata,
-            updated_at: profileRow.updated_at,
-          })
-          .eq("username", username);
-      }
-    }
+    // 1. Upsert Profile using fast isolated profile syncer
+    await syncUserProfileOnly(user);
 
     // 2. Normalize and Upsert Playlists and Tracks
     if (Array.isArray(user.playlists) && user.playlists.length > 0) {
@@ -1485,7 +1511,7 @@ export async function deleteBackgroundMetadataFromSupabase(idOrUrl: string): Pro
 }
 
 // ============================================================================
-// SUPABASE REMOTE SEARCH PROFILES
+// AUTHORITATIVE SOCIAL GRAPH & FRIENDSHIPS (SUPABASE POSTGRESQL)
 // ============================================================================
 
 export interface RemoteProfileSearchResult {
@@ -1498,6 +1524,268 @@ export interface RemoteProfileSearchResult {
   requestId?: string;
 }
 
+export interface FriendUserSummary {
+  id: string;
+  username: string;
+  displayName: string;
+  avatar: string;
+  bio?: string;
+  isOnline: boolean;
+  isPlaying?: boolean;
+  currentTrack?: Track;
+  roomId: string;
+  listenTogetherEnabled?: boolean;
+  privacy?: "public" | "friends";
+}
+
+export interface SupabasePendingRequest {
+  id: string;
+  fromUsername: string;
+  fromDisplayName?: string;
+  fromAvatar?: string;
+  toUsername: string;
+  toDisplayName?: string;
+  toAvatar?: string;
+  status: "pending" | "accepted" | "declined";
+  createdAt: number;
+}
+
+/**
+ * Returns canonical pair for friendships table to ensure exactly one unique row per pair:
+ * user1 = alphabetically smaller username
+ * user2 = alphabetically larger username
+ */
+export function getCanonicalFriendshipPair(
+  userA: string,
+  userB: string
+): { user1: string; user2: string } {
+  const cA = cleanUsername(userA);
+  const cB = cleanUsername(userB);
+  return cA < cB ? { user1: cA, user2: cB } : { user1: cB, user2: cA };
+}
+
+/**
+ * Authoritative: Fetches all confirmed friendships from Supabase PostgreSQL
+ */
+export async function getSupabaseFriendships(username: string): Promise<FriendUserSummary[]> {
+  const supabase = getSupabase();
+  if (!supabase) {
+    throw new Error("Supabase client is not available. Please verify database configuration.");
+  }
+  const clean = cleanUsername(username);
+  if (!clean) return [];
+
+  // 1. Fetch friendship rows where user1 = clean or user2 = clean
+  const { data: friendships, error: fError } = await supabase
+    .from("friendships")
+    .select("id, user1, user2, created_at")
+    .or(`user1.eq.${clean},user2.eq.${clean}`);
+
+  if (fError) {
+    console.error("[Supabase DB] getSupabaseFriendships error:", fError);
+    throw new Error(`Failed to load friendships from database: ${fError.message}`);
+  }
+
+  if (!Array.isArray(friendships) || friendships.length === 0) {
+    return [];
+  }
+
+  // 2. Resolve other usernames
+  const otherUsernames: string[] = [];
+  for (const f of friendships) {
+    const u1 = cleanUsername(f.user1);
+    const u2 = cleanUsername(f.user2);
+    const other = u1 === clean ? u2 : u1;
+    if (other && !otherUsernames.includes(other)) {
+      otherUsernames.push(other);
+    }
+  }
+
+  if (otherUsernames.length === 0) return [];
+
+  // 3. Query profiles for all other usernames
+  const { data: profiles, error: pError } = await supabase
+    .from("profiles")
+    .select("id, username, display_name, avatar, bio, pronouns")
+    .in("username", otherUsernames);
+
+  if (pError) {
+    console.warn("[Supabase DB] Error querying friend profiles:", pError);
+  }
+
+  const profilesMap = new Map<string, {
+    id: string;
+    username: string;
+    display_name?: string;
+    avatar?: string;
+    bio?: string;
+    pronouns?: string;
+  }>();
+
+  if (Array.isArray(profiles)) {
+    for (const p of profiles) {
+      if (p && p.username) {
+        profilesMap.set(cleanUsername(p.username), p);
+      }
+    }
+  }
+
+  // 4. Fetch room information for friends
+  const { data: roomsData } = await supabase
+    .from("listen_together_rooms")
+    .select("room_id, host_username, enabled, privacy, current_track, is_playing")
+    .in("host_username", otherUsernames);
+
+  const roomsMap = new Map<string, Record<string, unknown>>();
+  if (Array.isArray(roomsData)) {
+    for (const r of roomsData) {
+      if (r && r.host_username) {
+        roomsMap.set(cleanUsername(String(r.host_username)), r as unknown as Record<string, unknown>);
+      }
+    }
+  }
+
+  return otherUsernames.map((u) => {
+    const p = profilesMap.get(u);
+    const r = roomsMap.get(u);
+    const isOnline = Boolean(r && r.enabled !== false);
+    const isPlaying = Boolean(r && r.is_playing && r.current_track);
+
+    return {
+      id: p?.id || u,
+      username: u,
+      displayName: p?.display_name || u,
+      avatar: p?.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${u}`,
+      bio: p?.bio || "",
+      isOnline,
+      isPlaying,
+      currentTrack: (r?.current_track as Track) || undefined,
+      roomId: (r?.room_id as string) || `room_${u}`,
+      listenTogetherEnabled: r ? r.enabled !== false : true,
+      privacy: r?.privacy === "friends" ? ("friends" as const) : ("public" as const),
+    };
+  });
+}
+
+/**
+ * Authoritative: Fetches pending friend requests (received and sent) from Supabase PostgreSQL
+ */
+export async function getSupabasePendingRequests(username: string): Promise<{
+  received: SupabasePendingRequest[];
+  sent: SupabasePendingRequest[];
+}> {
+  const supabase = getSupabase();
+  if (!supabase) {
+    throw new Error("Supabase client is not available.");
+  }
+  const clean = cleanUsername(username);
+  if (!clean) return { received: [], sent: [] };
+
+  const [receivedRes, sentRes] = await Promise.all([
+    supabase
+      .from("friend_requests")
+      .select("*")
+      .eq("to_username", clean)
+      .eq("status", "pending")
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("friend_requests")
+      .select("*")
+      .eq("from_username", clean)
+      .eq("status", "pending")
+      .order("created_at", { ascending: false }),
+  ]);
+
+  if (receivedRes.error) {
+    console.error("[Supabase DB] Error loading received requests:", receivedRes.error);
+    throw new Error(`Failed to load received friend requests: ${receivedRes.error.message}`);
+  }
+
+  if (sentRes.error) {
+    console.error("[Supabase DB] Error loading sent requests:", sentRes.error);
+    throw new Error(`Failed to load sent friend requests: ${sentRes.error.message}`);
+  }
+
+  const received: SupabasePendingRequest[] = (receivedRes.data || []).map((r) => ({
+    id: r.id,
+    fromUsername: r.from_username,
+    fromDisplayName: r.from_display_name || r.from_username,
+    fromAvatar: r.from_avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${r.from_username}`,
+    toUsername: r.to_username,
+    toDisplayName: r.to_display_name || r.to_username,
+    toAvatar: r.to_avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${r.to_username}`,
+    status: r.status as "pending" | "accepted" | "declined",
+    createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+  }));
+
+  const sent: SupabasePendingRequest[] = (sentRes.data || []).map((r) => ({
+    id: r.id,
+    fromUsername: r.from_username,
+    fromDisplayName: r.from_display_name || r.from_username,
+    fromAvatar: r.from_avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${r.from_username}`,
+    toUsername: r.to_username,
+    toDisplayName: r.to_display_name || r.to_username,
+    toAvatar: r.to_avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${r.to_username}`,
+    status: r.status as "pending" | "accepted" | "declined",
+    createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+  }));
+
+  return { received, sent };
+}
+
+/**
+ * Authoritative: Calculates friendship status directly from Supabase PostgreSQL
+ */
+export async function getSupabaseFriendshipStatus(
+  u1: string,
+  u2: string
+): Promise<"friends" | "pending_sent" | "pending_received" | "none"> {
+  const supabase = getSupabase();
+  if (!supabase) return "none";
+  const c1 = cleanUsername(u1);
+  const c2 = cleanUsername(u2);
+  if (!c1 || !c2 || c1 === c2) return "none";
+
+  const { user1, user2 } = getCanonicalFriendshipPair(c1, c2);
+
+  // 1. Check friendship row
+  const { data: fData } = await supabase
+    .from("friendships")
+    .select("id")
+    .eq("user1", user1)
+    .eq("user2", user2)
+    .maybeSingle();
+
+  if (fData) return "friends";
+
+  // 2. Check pending requests
+  const { data: sentData } = await supabase
+    .from("friend_requests")
+    .select("id")
+    .eq("from_username", c1)
+    .eq("to_username", c2)
+    .eq("status", "pending")
+    .maybeSingle();
+
+  if (sentData) return "pending_sent";
+
+  const { data: receivedData } = await supabase
+    .from("friend_requests")
+    .select("id")
+    .eq("from_username", c2)
+    .eq("to_username", c1)
+    .eq("status", "pending")
+    .maybeSingle();
+
+  if (receivedData) return "pending_received";
+
+  return "none";
+}
+
+/**
+ * Authoritative: Searches Supabase PostgreSQL profiles and computes exact friendship status.
+ * Searches case-insensitively across username and display_name.
+ */
 export async function searchSupabaseProfiles(
   query: string,
   currentUsername: string
@@ -1509,6 +1797,7 @@ export async function searchSupabaseProfiles(
   if (!cleanQ) return [];
 
   try {
+    // 1. Query matching profiles by username or display_name
     let profiles: Array<{
       id?: string;
       username?: string;
@@ -1519,56 +1808,434 @@ export async function searchSupabaseProfiles(
 
     const { data: orData, error: orError } = await supabase
       .from("profiles")
-      .select("id, username, display_name, avatar, bio, updated_at")
+      .select("id, username, display_name, avatar, bio")
       .or(`username.ilike.%${cleanQ}%,display_name.ilike.%${cleanQ}%`)
-      .limit(50);
+      .limit(40);
 
     if (!orError && Array.isArray(orData) && orData.length > 0) {
       profiles = orData;
     } else {
+      // Fallback search strategies
       const { data: uData } = await supabase
         .from("profiles")
-        .select("id, username, display_name, avatar, bio, updated_at")
+        .select("id, username, display_name, avatar, bio")
         .ilike("username", `%${cleanQ}%`)
-        .limit(50);
+        .limit(40);
+
       if (Array.isArray(uData) && uData.length > 0) {
         profiles = uData;
       } else {
         const { data: dData } = await supabase
           .from("profiles")
-          .select("id, username, display_name, avatar, bio, updated_at")
+          .select("id, username, display_name, avatar, bio")
           .ilike("display_name", `%${cleanQ}%`)
-          .limit(50);
+          .limit(40);
         if (Array.isArray(dData)) {
           profiles = dData;
         }
       }
     }
 
+    // Filter out current user and duplicates
     const seen = new Set<string>();
-    return profiles
-      .filter((p) => {
-        if (!p || !p.username) return false;
-        const uClean = cleanUsername(p.username);
-        if (uClean === cleanCurrent || seen.has(uClean)) return false;
-        seen.add(uClean);
-        return true;
-      })
-      .map((p) => {
+    const validProfiles = profiles.filter((p) => {
+      if (!p || !p.username) return false;
+      const uClean = cleanUsername(p.username);
+      if (uClean === cleanCurrent || seen.has(uClean)) return false;
+      seen.add(uClean);
+      return true;
+    });
+
+    if (validProfiles.length === 0) return [];
+
+    if (!cleanCurrent) {
+      return validProfiles.map((p) => {
         const uClean = cleanUsername(p.username!);
         return {
           username: p.username!,
           displayName: p.display_name || p.username!,
           avatar: p.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${uClean}`,
           bio: p.bio || undefined,
-          isOnline: true,
+          isOnline: false,
           friendStatus: "none" as const,
         };
       });
+    }
+
+    // 2. Fetch all current user's friendships in a single query
+    const { data: userFriendships } = await supabase
+      .from("friendships")
+      .select("user1, user2")
+      .or(`user1.eq.${cleanCurrent},user2.eq.${cleanCurrent}`);
+
+    const friendSet = new Set<string>();
+    if (Array.isArray(userFriendships)) {
+      for (const f of userFriendships) {
+        const u1 = cleanUsername(f.user1);
+        const u2 = cleanUsername(f.user2);
+        const friend = u1 === cleanCurrent ? u2 : u1;
+        if (friend) friendSet.add(friend);
+      }
+    }
+
+    // 3. Fetch all current user's pending requests in a single query
+    const { data: userRequests } = await supabase
+      .from("friend_requests")
+      .select("id, from_username, to_username, status")
+      .eq("status", "pending")
+      .or(`from_username.eq.${cleanCurrent},to_username.eq.${cleanCurrent}`);
+
+    const sentRequests = new Map<string, string>(); // toUsername -> requestId
+    const receivedRequests = new Map<string, string>(); // fromUsername -> requestId
+
+    if (Array.isArray(userRequests)) {
+      for (const pr of userRequests) {
+        const fromU = cleanUsername(pr.from_username);
+        const toU = cleanUsername(pr.to_username);
+        if (fromU === cleanCurrent) {
+          sentRequests.set(toU, pr.id);
+        } else if (toU === cleanCurrent) {
+          receivedRequests.set(fromU, pr.id);
+        }
+      }
+    }
+
+    // 4. Map each profile with authoritative status
+    return validProfiles.map((p) => {
+      const uName = cleanUsername(p.username!);
+      let friendStatus: "friends" | "pending_sent" | "pending_received" | "none" = "none";
+      let requestId: string | undefined = undefined;
+
+      if (friendSet.has(uName)) {
+        friendStatus = "friends";
+      } else if (sentRequests.has(uName)) {
+        friendStatus = "pending_sent";
+        requestId = sentRequests.get(uName);
+      } else if (receivedRequests.has(uName)) {
+        friendStatus = "pending_received";
+        requestId = receivedRequests.get(uName);
+      }
+
+      return {
+        username: p.username!,
+        displayName: p.display_name || p.username!,
+        avatar: p.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${uName}`,
+        bio: p.bio || undefined,
+        isOnline: false,
+        friendStatus,
+        requestId,
+      };
+    });
   } catch (err) {
     console.warn("[Supabase DB] searchSupabaseProfiles error:", err);
     return [];
   }
 }
+
+/**
+ * Authoritative: Creates a friend request in Supabase friend_requests table.
+ * If reverse pending request already exists, automatically accepts into friendships table.
+ */
+export async function createSupabaseFriendRequest(
+  fromUser: { username: string; displayName?: string; avatar?: string },
+  toUsername: string
+): Promise<{
+  success: boolean;
+  status: "friends" | "pending_sent";
+  requestId?: string;
+  error?: string;
+}> {
+  const supabase = getSupabase();
+  if (!supabase) {
+    return { success: false, status: "pending_sent", error: "Database not connected" };
+  }
+
+  const fromClean = cleanUsername(fromUser.username);
+  const toClean = cleanUsername(toUsername);
+
+  if (!fromClean || !toClean) {
+    return { success: false, status: "pending_sent", error: "Both usernames are required." };
+  }
+
+  if (fromClean === toClean) {
+    return { success: false, status: "pending_sent", error: "You cannot send a friend request to yourself." };
+  }
+
+  // 1. Verify target user exists in profiles
+  const { data: targetProfile, error: targetErr } = await supabase
+    .from("profiles")
+    .select("id, username, display_name, avatar")
+    .eq("username", toClean)
+    .maybeSingle();
+
+  if (targetErr || !targetProfile) {
+    return { success: false, status: "pending_sent", error: `User @${toUsername} does not exist.` };
+  }
+
+  // 2. Check if already friends
+  const { user1, user2 } = getCanonicalFriendshipPair(fromClean, toClean);
+  const { data: existingFriendship } = await supabase
+    .from("friendships")
+    .select("id")
+    .eq("user1", user1)
+    .eq("user2", user2)
+    .maybeSingle();
+
+  if (existingFriendship) {
+    return { success: true, status: "friends" };
+  }
+
+  // 3. Check if reverse request exists (toClean -> fromClean). If so, auto-accept!
+  const { data: reverseReq } = await supabase
+    .from("friend_requests")
+    .select("id")
+    .eq("from_username", toClean)
+    .eq("to_username", fromClean)
+    .eq("status", "pending")
+    .maybeSingle();
+
+  if (reverseReq) {
+    const friendshipId = `friend_${user1}_${user2}`;
+    const { error: fErr } = await supabase.from("friendships").upsert(
+      {
+        id: friendshipId,
+        user1,
+        user2,
+        created_at: new Date().toISOString(),
+      },
+      { onConflict: "user1,user2" }
+    );
+
+    if (fErr) {
+      console.error("[Supabase DB] Error auto-accepting friendship:", fErr);
+      return { success: false, status: "pending_sent", error: "Could not create friendship." };
+    }
+
+    // Clean up request rows
+    await supabase.from("friend_requests").delete().eq("id", reverseReq.id);
+    await supabase
+      .from("friend_requests")
+      .delete()
+      .eq("from_username", fromClean)
+      .eq("to_username", toClean);
+
+    return { success: true, status: "friends" };
+  }
+
+  // 4. Check if duplicate pending request was already sent
+  const { data: existingReq } = await supabase
+    .from("friend_requests")
+    .select("id")
+    .eq("from_username", fromClean)
+    .eq("to_username", toClean)
+    .eq("status", "pending")
+    .maybeSingle();
+
+  if (existingReq) {
+    return { success: true, status: "pending_sent", requestId: existingReq.id };
+  }
+
+  // 5. Insert new request
+  const reqId = `req_${fromClean}_${toClean}_${Date.now()}`;
+  const { error: insertErr } = await supabase.from("friend_requests").insert({
+    id: reqId,
+    from_username: fromClean,
+    from_display_name: fromUser.displayName || fromUser.username,
+    from_avatar: fromUser.avatar || "",
+    to_username: toClean,
+    to_display_name: targetProfile.display_name || targetProfile.username,
+    to_avatar: targetProfile.avatar || "",
+    status: "pending",
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  });
+
+  if (insertErr) {
+    console.error("[Supabase DB] Error inserting friend request:", insertErr);
+    return { success: false, status: "pending_sent", error: "Failed to persist friend request." };
+  }
+
+  return { success: true, status: "pending_sent", requestId: reqId };
+}
+
+/**
+ * Authoritative: Responds to a friend request (accept or decline).
+ * Verifies recipient ownership in Supabase PostgreSQL.
+ */
+export async function respondSupabaseFriendRequest(
+  requestId: string,
+  recipientUsername: string,
+  responseAction: "accept" | "decline"
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { success: false, error: "Database not connected" };
+
+  const cleanRecipient = cleanUsername(recipientUsername);
+  if (!requestId || !cleanRecipient) {
+    return { success: false, error: "Missing requestId or recipient." };
+  }
+
+  // 1. Fetch the request
+  const { data: req, error: fetchErr } = await supabase
+    .from("friend_requests")
+    .select("*")
+    .eq("id", requestId)
+    .maybeSingle();
+
+  if (fetchErr || !req) {
+    return { success: false, error: "Friend request not found or already processed." };
+  }
+
+  // 2. Authorize: verify User B is actually the recipient
+  if (cleanUsername(req.to_username) !== cleanRecipient) {
+    return { success: false, error: "You are not authorized to respond to this request." };
+  }
+
+  if (responseAction === "accept") {
+    const fromClean = cleanUsername(req.from_username);
+    const { user1, user2 } = getCanonicalFriendshipPair(fromClean, cleanRecipient);
+    const friendshipId = `friend_${user1}_${user2}`;
+
+    // 3. Insert canonical friendship row
+    const { error: fErr } = await supabase.from("friendships").upsert(
+      {
+        id: friendshipId,
+        user1,
+        user2,
+        created_at: new Date().toISOString(),
+      },
+      { onConflict: "user1,user2" }
+    );
+
+    if (fErr) {
+      console.error("[Supabase DB] Error inserting friendship row:", fErr);
+      return { success: false, error: "Failed to establish friendship in database." };
+    }
+
+    // 4. Delete request rows
+    await supabase.from("friend_requests").delete().eq("id", requestId);
+    await supabase
+      .from("friend_requests")
+      .delete()
+      .eq("from_username", cleanRecipient)
+      .eq("to_username", fromClean);
+
+    return { success: true };
+  } else {
+    // Decline
+    await supabase.from("friend_requests").delete().eq("id", requestId);
+    return { success: true };
+  }
+}
+
+/**
+ * Authoritative: Cancels a pending friend request.
+ * Only the sender is authorized to cancel.
+ */
+export async function cancelSupabaseFriendRequest(
+  senderUsername: string,
+  requestId?: string,
+  toUsername?: string
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { success: false, error: "Database not connected" };
+
+  const cleanSender = cleanUsername(senderUsername);
+  if (!cleanSender) return { success: false, error: "Sender username required." };
+
+  if (requestId) {
+    const { data: req } = await supabase
+      .from("friend_requests")
+      .select("from_username")
+      .eq("id", requestId)
+      .maybeSingle();
+
+    if (!req) return { success: true }; // already gone
+    if (cleanUsername(req.from_username) !== cleanSender) {
+      return { success: false, error: "You are not authorized to cancel this request." };
+    }
+    await supabase.from("friend_requests").delete().eq("id", requestId);
+    return { success: true };
+  }
+
+  if (toUsername) {
+    const cleanTo = cleanUsername(toUsername);
+    await supabase
+      .from("friend_requests")
+      .delete()
+      .eq("from_username", cleanSender)
+      .eq("to_username", cleanTo);
+    return { success: true };
+  }
+
+  return { success: false, error: "requestId or toUsername required." };
+}
+
+/**
+ * Authoritative: Removes a friendship.
+ * Verifies that the authenticated user belongs to the friendship.
+ */
+export async function removeSupabaseFriendship(
+  userA: string,
+  userB: string,
+  authenticatedUsername: string
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { success: false, error: "Database not connected" };
+
+  const cA = cleanUsername(userA);
+  const cB = cleanUsername(userB);
+  const authUser = cleanUsername(authenticatedUsername);
+
+  if (!authUser || (authUser !== cA && authUser !== cB)) {
+    return { success: false, error: "Not authorized to remove this friendship." };
+  }
+
+  const { user1, user2 } = getCanonicalFriendshipPair(cA, cB);
+  const { error } = await supabase
+    .from("friendships")
+    .delete()
+    .eq("user1", user1)
+    .eq("user2", user2);
+
+  if (error) {
+    console.error("[Supabase DB] Error removing friendship:", error);
+    return { success: false, error: "Failed to remove friendship." };
+  }
+
+  return { success: true };
+}
+
+/**
+ * Authoritative: Admin deletion of user across Supabase tables
+ */
+export async function deleteSupabaseUserCompletely(username: string): Promise<boolean> {
+  const supabase = getSupabase();
+  if (!supabase || !username) return false;
+  const clean = cleanUsername(username);
+
+  try {
+    // Delete friendships
+    await supabase.from("friendships").delete().or(`user1.eq.${clean},user2.eq.${clean}`);
+    // Delete friend requests
+    await supabase.from("friend_requests").delete().or(`from_username.eq.${clean},to_username.eq.${clean}`);
+    // Delete rooms & room requests
+    await supabase.from("listen_together_rooms").delete().eq("host_username", clean);
+    await supabase.from("listen_together_requests").delete().or(`username.eq.${clean},room_id.eq.room_${clean}`);
+    // Delete playlists owned by user
+    await supabase.from("playlists").delete().eq("owner_id", clean);
+    // Delete profile
+    const { error } = await supabase.from("profiles").delete().or(`username.eq.${clean},id.eq.${clean}`);
+    if (error) {
+      console.warn("[Supabase DB] delete user error:", error);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn("[Supabase DB] delete user error:", err);
+    return false;
+  }
+}
+
 
 

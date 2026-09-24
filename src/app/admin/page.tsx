@@ -32,7 +32,6 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import type { BackgroundMetadata } from "@/lib/types";
-import { getAllUsers } from "@/lib/storage";
 
 interface AdminStats {
   system: {
@@ -203,7 +202,7 @@ export default function AdminPage() {
 
     setIsLoadingUsers(true);
     try {
-      // 1. Fetch full directory from server first
+      // Fetch full directory from authoritative server & Supabase profiles
       const res = await fetch("/api/admin/users", {
         headers: { Authorization: `Bearer ${tok}` },
         signal: AbortSignal.timeout(8000),
@@ -213,31 +212,6 @@ export default function AdminPage() {
         if (Array.isArray(data.users)) {
           setUsersList(data.users);
         }
-      }
-
-      // 2. Consolidate any local accounts from this browser's storage
-      try {
-        const localUsers = getAllUsers();
-        if (localUsers && localUsers.length > 0) {
-          const postRes = await fetch("/api/admin/users", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${tok}`,
-            },
-            body: JSON.stringify({ localUsers }),
-            signal: AbortSignal.timeout(4000),
-          }).catch(() => null);
-
-          if (postRes && postRes.ok) {
-            const postData = await postRes.json();
-            if (Array.isArray(postData.users) && postData.users.length > 0) {
-              setUsersList(postData.users);
-            }
-          }
-        }
-      } catch {
-        // ignore local storage read errors
       }
     } catch (err) {
       console.warn("[Admin] Users sync error:", err);

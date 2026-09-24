@@ -62,8 +62,6 @@ interface ServerStoreState {
   requests: Map<string, RoomRequest>;
   roomSettings: Map<string, RoomSettingsRecord>;
   liveRooms: Map<string, LivePlaybackState>;
-  friendships: Map<string, Set<string>>;
-  friendRequests: Map<string, FriendRequestRecord>;
   backgrounds: Map<string, BackgroundMetadata>;
 }
 
@@ -86,8 +84,6 @@ function getStorageFilePath(): string {
 function loadPersistedState(): {
   users: UserAccount[];
   rooms: Room[];
-  friendships?: Record<string, string[]>;
-  friendRequests?: FriendRequestRecord[];
   backgrounds?: BackgroundMetadata[];
 } {
   try {
@@ -98,15 +94,13 @@ function loadPersistedState(): {
       return {
         users: Array.isArray(parsed.users) ? parsed.users : [],
         rooms: Array.isArray(parsed.rooms) ? parsed.rooms : [],
-        friendships: parsed.friendships && typeof parsed.friendships === "object" ? parsed.friendships : {},
-        friendRequests: Array.isArray(parsed.friendRequests) ? parsed.friendRequests : [],
         backgrounds: Array.isArray(parsed.backgrounds) ? parsed.backgrounds : [],
       };
     }
   } catch (err) {
     console.warn("[ServerStore] Could not load persisted server state:", err);
   }
-  return { users: [], rooms: [], friendships: {}, friendRequests: [], backgrounds: [] };
+  return { users: [], rooms: [], backgrounds: [] };
 }
 
 function persistStateThrottled(): void {
@@ -114,11 +108,6 @@ function persistStateThrottled(): void {
     const filePath = getStorageFilePath();
     const usersArr = Array.from(getServerStore().users.values());
     const roomsArr = Array.from(getServerStore().rooms.values());
-    const friendshipsObj: Record<string, string[]> = {};
-    for (const [u, set] of getServerStore().friendships.entries()) {
-      friendshipsObj[u] = Array.from(set);
-    }
-    const friendRequestsArr = Array.from(getServerStore().friendRequests.values());
     const backgroundsArr = Array.from(new Set(getServerStore().backgrounds.values()));
     fs.writeFileSync(
       filePath,
@@ -126,8 +115,6 @@ function persistStateThrottled(): void {
         {
           users: usersArr,
           rooms: roomsArr,
-          friendships: friendshipsObj,
-          friendRequests: friendRequestsArr,
           backgrounds: backgroundsArr,
         },
         null,
@@ -154,8 +141,6 @@ export function getServerStore(): ServerStoreState {
     const loaded = loadPersistedState();
     const usersMap = new Map<string, UserAccount>();
     const roomsMap = new Map<string, Room>();
-    const friendshipsMap = new Map<string, Set<string>>();
-    const friendRequestsMap = new Map<string, FriendRequestRecord>();
     const backgroundsMap = new Map<string, BackgroundMetadata>();
 
     if (Array.isArray(loaded.backgrounds)) {
@@ -163,22 +148,6 @@ export function getServerStore(): ServerStoreState {
         if (bg && bg.id && !bg.videoUrl?.includes("blob.vercel-storage.com")) {
           backgroundsMap.set(bg.id, bg);
           if (bg.videoUrl) backgroundsMap.set(bg.videoUrl, bg);
-        }
-      }
-    }
-
-    if (loaded.friendships) {
-      for (const [u, list] of Object.entries(loaded.friendships)) {
-        if (Array.isArray(list)) {
-          friendshipsMap.set(u.toLowerCase(), new Set(list.map((x) => x.toLowerCase())));
-        }
-      }
-    }
-
-    if (Array.isArray(loaded.friendRequests)) {
-      for (const req of loaded.friendRequests) {
-        if (req && req.id) {
-          friendRequestsMap.set(req.id, req);
         }
       }
     }
@@ -207,8 +176,6 @@ export function getServerStore(): ServerStoreState {
       requests: new Map<string, RoomRequest>(),
       roomSettings: new Map<string, RoomSettingsRecord>(),
       liveRooms: new Map<string, LivePlaybackState>(),
-      friendships: friendshipsMap,
-      friendRequests: friendRequestsMap,
       backgrounds: backgroundsMap,
     };
   } else {
@@ -233,12 +200,6 @@ export function getServerStore(): ServerStoreState {
     }
     if (!globalStore._auxy_server_store.liveRooms) {
       globalStore._auxy_server_store.liveRooms = new Map<string, LivePlaybackState>();
-    }
-    if (!globalStore._auxy_server_store.friendships) {
-      globalStore._auxy_server_store.friendships = new Map<string, Set<string>>();
-    }
-    if (!globalStore._auxy_server_store.friendRequests) {
-      globalStore._auxy_server_store.friendRequests = new Map<string, FriendRequestRecord>();
     }
   }
   return globalStore._auxy_server_store;
@@ -669,359 +630,6 @@ export interface FriendUserSummary {
   privacy: "public" | "friends";
 }
 
-export function areUsersFriends(u1: string, u2: string): boolean {
-  if (!u1 || !u2) return false;
-  const store = getServerStore();
-  const c1 = u1.trim().toLowerCase();
-  const c2 = u2.trim().toLowerCase();
-  if (c1 === c2) return false;
-  return Boolean(store.friendships.get(c1)?.has(c2));
-}
-
-export function addFriendship(u1: string, u2: string): void {
-  if (!u1 || !u2) return;
-  const store = getServerStore();
-  const c1 = u1.trim().toLowerCase();
-  const c2 = u2.trim().toLowerCase();
-  if (c1 === c2) return;
-
-  if (!store.friendships.has(c1)) store.friendships.set(c1, new Set());
-  if (!store.friendships.has(c2)) store.friendships.set(c2, new Set());
-  store.friendships.get(c1)!.add(c2);
-  store.friendships.get(c2)!.add(c1);
-
-  // Auto clean any pending requests between them
-  for (const [id, req] of store.friendRequests.entries()) {
-    if (
-      (req.fromUsername === c1 && req.toUsername === c2) ||
-      (req.fromUsername === c2 && req.toUsername === c1)
-    ) {
-      store.friendRequests.delete(id);
-    }
-  }
-
-  schedulePersist();
-}
-
-export function removeFriendship(u1: string, u2: string): void {
-  if (!u1 || !u2) return;
-  const store = getServerStore();
-  const c1 = u1.trim().toLowerCase();
-  const c2 = u2.trim().toLowerCase();
-  store.friendships.get(c1)?.delete(c2);
-  store.friendships.get(c2)?.delete(c1);
-  schedulePersist();
-}
-
-export function getFriendshipStatus(
-  u1: string,
-  u2: string
-): "friends" | "pending_sent" | "pending_received" | "none" {
-  if (!u1 || !u2) return "none";
-  const store = getServerStore();
-  const c1 = u1.trim().toLowerCase();
-  const c2 = u2.trim().toLowerCase();
-  if (c1 === c2) return "none";
-
-  if (store.friendships.get(c1)?.has(c2)) {
-    return "friends";
-  }
-
-  for (const req of store.friendRequests.values()) {
-    if (req.status === "pending") {
-      if (req.fromUsername === c1 && req.toUsername === c2) {
-        return "pending_sent";
-      }
-      if (req.fromUsername === c2 && req.toUsername === c1) {
-        return "pending_received";
-      }
-    }
-  }
-
-  return "none";
-}
-
-export function createFriendRequest(
-  fromUser: { username: string; displayName?: string; avatar?: string },
-  toUsername: string
-): { success: boolean; status: "pending" | "accepted"; error?: string } {
-  const store = getServerStore();
-  const fromClean = (fromUser.username || "").trim().toLowerCase();
-  const toClean = (toUsername || "").trim().toLowerCase();
-
-  if (!fromClean || !toClean) {
-    return { success: false, status: "pending", error: "Invalid usernames" };
-  }
-  if (fromClean === toClean) {
-    return { success: false, status: "pending", error: "Cannot add yourself" };
-  }
-
-  // Already friends
-  if (store.friendships.get(fromClean)?.has(toClean)) {
-    return { success: true, status: "accepted" };
-  }
-
-  // Check if target already sent a request to me -> auto accept!
-  for (const [id, req] of store.friendRequests.entries()) {
-    if (req.fromUsername === toClean && req.toUsername === fromClean && req.status === "pending") {
-      store.friendRequests.delete(id);
-      addFriendship(fromClean, toClean);
-      return { success: true, status: "accepted" };
-    }
-  }
-
-  // Check if I already sent a request
-  for (const req of store.friendRequests.values()) {
-    if (req.fromUsername === fromClean && req.toUsername === toClean && req.status === "pending") {
-      return { success: true, status: "pending" };
-    }
-  }
-
-  // Get recipient info if available
-  const recipientUser = store.users.get(toClean);
-  const recipientPresence = store.presence.get(toClean);
-  const toDisplayName = recipientUser?.displayName || recipientPresence?.displayName || toClean;
-  const toAvatar =
-    recipientUser?.avatar ||
-    recipientPresence?.avatar ||
-    `https://api.dicebear.com/7.x/shapes/svg?seed=${toClean}`;
-
-  const requestId = `freq_${fromClean}_${toClean}_${Date.now()}`;
-  const record: FriendRequestRecord = {
-    id: requestId,
-    fromUsername: fromClean,
-    fromDisplayName: fromUser.displayName || fromClean,
-    fromAvatar:
-      fromUser.avatar || `https://api.dicebear.com/7.x/shapes/svg?seed=${fromClean}`,
-    toUsername: toClean,
-    toDisplayName,
-    toAvatar,
-    status: "pending",
-    createdAt: Date.now(),
-  };
-
-  store.friendRequests.set(requestId, record);
-  schedulePersist();
-  return { success: true, status: "pending" };
-}
-
-export function respondToFriendRequest(
-  requestId: string,
-  action: "accept" | "decline"
-): boolean {
-  const store = getServerStore();
-  const req = store.friendRequests.get(requestId);
-  if (!req || req.status !== "pending") return false;
-
-  if (action === "accept") {
-    req.status = "accepted";
-    store.friendRequests.delete(requestId);
-    addFriendship(req.fromUsername, req.toUsername);
-  } else {
-    req.status = "declined";
-    store.friendRequests.delete(requestId);
-    schedulePersist();
-  }
-  return true;
-}
-
-export function cancelFriendRequest(
-  fromUsername: string,
-  toUsername?: string,
-  requestId?: string
-): boolean {
-  const store = getServerStore();
-  const fromClean = fromUsername.trim().toLowerCase();
-  const toClean = (toUsername || "").trim().toLowerCase();
-
-  if (requestId && store.friendRequests.has(requestId)) {
-    store.friendRequests.delete(requestId);
-    schedulePersist();
-    return true;
-  }
-
-  let deleted = false;
-  for (const [id, req] of store.friendRequests.entries()) {
-    if (
-      req.status === "pending" &&
-      req.fromUsername === fromClean &&
-      (!toClean || req.toUsername === toClean)
-    ) {
-      store.friendRequests.delete(id);
-      deleted = true;
-    }
-  }
-
-  if (deleted) schedulePersist();
-  return deleted;
-}
-
-export function getUserFriends(username: string): FriendUserSummary[] {
-  const store = getServerStore();
-  const clean = username.trim().toLowerCase();
-  const friendUsernames = store.friendships.get(clean);
-  if (!friendUsernames || friendUsernames.size === 0) return [];
-
-  const now = Date.now();
-  const result: FriendUserSummary[] = [];
-
-  for (const fUsername of friendUsernames) {
-    const presence = store.presence.get(fUsername);
-    const userAcc = store.users.get(fUsername);
-    const room = store.rooms.get(`room_${fUsername}`) || store.rooms.get(presence?.roomId || "");
-    const roomSettings = getServerRoomSettings(room?.id || `room_${fUsername}`);
-
-    const isOnline = presence ? presence.isOnline && now - presence.lastSeen < 65000 : false;
-
-    result.push({
-      id: userAcc?.id || `usr_${fUsername}`,
-      username: fUsername,
-      displayName: userAcc?.displayName || presence?.displayName || fUsername,
-      avatar:
-        userAcc?.avatar ||
-        presence?.avatar ||
-        `https://api.dicebear.com/7.x/shapes/svg?seed=${fUsername}`,
-      bio: userAcc?.bio || presence?.bio,
-      isOnline,
-      isPlaying: isOnline ? presence?.isPlaying : false,
-      currentTrack: isOnline ? presence?.currentTrack : undefined,
-      roomId: room?.id || `room_${fUsername}`,
-      listenTogetherEnabled: roomSettings.enabled,
-      privacy: roomSettings.privacy,
-    });
-  }
-
-  return result.sort((a, b) => {
-    if (a.isOnline && !b.isOnline) return -1;
-    if (!a.isOnline && b.isOnline) return 1;
-    return a.displayName.localeCompare(b.displayName);
-  });
-}
-
-export function getUserPendingRequests(username: string): {
-  received: FriendRequestRecord[];
-  sent: FriendRequestRecord[];
-} {
-  const store = getServerStore();
-  const clean = username.trim().toLowerCase();
-  const received: FriendRequestRecord[] = [];
-  const sent: FriendRequestRecord[] = [];
-
-  for (const req of store.friendRequests.values()) {
-    if (req.status === "pending") {
-      if (req.toUsername === clean) {
-        received.push(req);
-      } else if (req.fromUsername === clean) {
-        sent.push(req);
-      }
-    }
-  }
-
-  return {
-    received: received.sort((a, b) => b.createdAt - a.createdAt),
-    sent: sent.sort((a, b) => b.createdAt - a.createdAt),
-  };
-}
-
-export function searchUsersWithFriendStatus(
-  query: string,
-  currentUsername: string
-): Array<{
-  username: string;
-  displayName: string;
-  avatar: string;
-  bio?: string;
-  isOnline: boolean;
-  friendStatus: "friends" | "pending_sent" | "pending_received" | "none";
-  requestId?: string;
-}> {
-  const store = getServerStore();
-  const cleanQuery = query.trim().toLowerCase();
-  const cleanCurrent = currentUsername.trim().toLowerCase();
-  const seen = new Set<string>();
-  const results: Array<{
-    username: string;
-    displayName: string;
-    avatar: string;
-    bio?: string;
-    isOnline: boolean;
-    friendStatus: "friends" | "pending_sent" | "pending_received" | "none";
-    requestId?: string;
-  }> = [];
-
-  const now = Date.now();
-
-  const candidates: Array<{
-    username: string;
-    displayName: string;
-    avatar: string;
-    bio?: string;
-    lastSeen?: number;
-    isOnline?: boolean;
-  }> = [];
-
-  for (const u of store.users.values()) {
-    candidates.push({
-      username: u.username,
-      displayName: u.displayName || u.username,
-      avatar: u.avatar || `https://api.dicebear.com/7.x/shapes/svg?seed=${u.username}`,
-      bio: u.bio,
-    });
-  }
-
-  for (const p of store.presence.values()) {
-    candidates.push({
-      username: p.username,
-      displayName: p.displayName || p.username,
-      avatar: p.avatar,
-      bio: p.bio,
-      lastSeen: p.lastSeen,
-      isOnline: p.isOnline,
-    });
-  }
-
-  for (const cand of candidates) {
-    const uName = cand.username.trim().toLowerCase();
-    if (!uName || uName === cleanCurrent || seen.has(uName)) continue;
-    seen.add(uName);
-
-    const matches =
-      !cleanQuery ||
-      uName.includes(cleanQuery) ||
-      cand.displayName.toLowerCase().includes(cleanQuery);
-
-    if (matches) {
-      const presence = store.presence.get(uName);
-      const isOnline = presence ? presence.isOnline && now - presence.lastSeen < 65000 : false;
-      const friendStatus = getFriendshipStatus(cleanCurrent, uName);
-
-      let reqId: string | undefined;
-      for (const r of store.friendRequests.values()) {
-        if (
-          r.status === "pending" &&
-          ((r.fromUsername === cleanCurrent && r.toUsername === uName) ||
-            (r.fromUsername === uName && r.toUsername === cleanCurrent))
-        ) {
-          reqId = r.id;
-          break;
-        }
-      }
-
-      results.push({
-        username: uName,
-        displayName: cand.displayName,
-        avatar: cand.avatar,
-        bio: cand.bio,
-        isOnline,
-        friendStatus,
-        requestId: reqId,
-      });
-    }
-  }
-
-  return results.slice(0, 20);
-}
-
 // ============================================================================
 // LIVE BACKGROUNDS / SHADERS (PERSISTED + IN-MEMORY)
 // ============================================================================
@@ -1086,8 +694,6 @@ export function clearAllUserDataAndRooms(): void {
   store.requests.clear();
   store.roomSettings.clear();
   store.liveRooms.clear();
-  store.friendships.clear();
-  store.friendRequests.clear();
   schedulePersist();
 }
 

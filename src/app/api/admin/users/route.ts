@@ -1,198 +1,112 @@
 import { NextRequest, NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
 import { getSupabase } from "@/lib/supabase";
-import { getServerStore, registerOrUpdateUserInServerStore } from "@/lib/server-store";
-import { withTimeout } from "@/lib/utils";
+import { getServerStore } from "@/lib/server-store";
 import {
+  cleanUsername,
+  deleteSupabaseUserCompletely,
+  isTableMissingError,
   isTableMarkedMissing,
   markTableMissing,
-  isTableMissingError,
 } from "@/lib/supabase-db";
-import type { UserAccount } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-function collectAllUsers(): Record<string, unknown>[] {
-  const store = getServerStore();
-  const usersMap = new Map<string, Record<string, unknown>>();
-
-  // 0. Ensure all users from persisted state are synced into store.users
-  try {
-    const filePath = path.join(process.cwd(), ".data", "server-state.json");
-    if (fs.existsSync(filePath)) {
-      const raw = fs.readFileSync(filePath, "utf-8");
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed.users)) {
-        for (const u of parsed.users) {
-          if (u && u.username) {
-            const clean = String(u.username).trim().toLowerCase();
-            if (clean && !store.users.has(clean)) {
-              store.users.set(clean, u);
-            }
-          }
-        }
-      }
-    }
-  } catch {}
-
-  // 1. Gather all users from server store accounts
-  for (const [clean, u] of store.users.entries()) {
-    if (!clean) continue;
-    const presence = store.presence.get(clean);
-    const room = store.rooms.get(`room_${clean}`) || store.rooms.get(presence?.roomId || "");
-    const live = store.liveRooms.get(room?.id || `room_${clean}`) || store.liveRooms.get(clean);
-
-    const hasLiveSession = Boolean(live && live.isPlaying && live.currentTrack);
-    const isRecentlyActive = Boolean(presence?.isOnline && Date.now() - (presence.lastSeen || 0) < 65000);
-    const isOnline = isRecentlyActive || hasLiveSession;
-    const isPlaying = Boolean((presence?.isPlaying && isRecentlyActive) || hasLiveSession);
-
-    usersMap.set(clean, {
-      id: u.id || `usr_${clean}`,
-      username: u.username || clean,
-      displayName: u.displayName || u.username || clean,
-      email: u.email || `${clean}@auxy.app`,
-      avatar: u.avatar || presence?.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${clean}`,
-      bio: u.bio || presence?.bio || "",
-      pronouns: u.pronouns || presence?.pronouns || "",
-      starCount: presence?.starCount ?? 0,
-      isOnline,
-      isPlaying,
-      currentTrack: presence?.currentTrack || live?.currentTrack || null,
-      roomId: room?.id || presence?.roomId || `room_${clean}`,
-      playlistsCount: u.playlists?.length ?? 1,
-      createdAt: u.createdAt || Date.now(),
-      source: "server_store",
-    });
-  }
-
-  // 2. Gather any additional users from presence records
-  for (const [clean, pres] of store.presence.entries()) {
-    if (!clean) continue;
-    const existing = usersMap.get(clean);
-    const isRecentlyActive = Boolean(pres.isOnline && Date.now() - (pres.lastSeen || 0) < 65000);
-
-    if (!existing) {
-      usersMap.set(clean, {
-        id: pres.id || `usr_${clean}`,
-        username: pres.username || clean,
-        displayName: pres.displayName || pres.username || clean,
-        email: `${clean}@auxy.app`,
-        avatar: pres.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${clean}`,
-        bio: pres.bio || "",
-        pronouns: pres.pronouns || "",
-        starCount: pres.starCount ?? 0,
-        isOnline: isRecentlyActive,
-        isPlaying: Boolean(isRecentlyActive && pres.isPlaying),
-        currentTrack: pres.currentTrack || null,
-        roomId: pres.roomId || `room_${clean}`,
-        playlistsCount: 1,
-        createdAt: Date.now(),
-        source: "presence",
-      });
-    } else {
-      if (isRecentlyActive) {
-        existing.isOnline = true;
-        existing.isPlaying = Boolean(pres.isPlaying);
-        existing.currentTrack = pres.currentTrack || existing.currentTrack || null;
-      }
-      if (pres.starCount) existing.starCount = pres.starCount;
-    }
-  }
-
-  // 3. Gather any additional room hosts
-  for (const room of store.rooms.values()) {
-    const clean = (room.hostUsername || "").trim().toLowerCase();
-    if (!clean) continue;
-    if (!usersMap.has(clean)) {
-      usersMap.set(clean, {
-        id: room.hostId || `usr_${clean}`,
-        username: clean,
-        displayName: room.hostDisplayName || clean,
-        email: `${clean}@auxy.app`,
-        avatar: room.hostAvatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${clean}`,
-        bio: "Live Community DJ",
-        pronouns: "",
-        starCount: 0,
-        isOnline: true,
-        isPlaying: Boolean(room.isPlaying),
-        currentTrack: room.currentTrack || null,
-        roomId: room.id,
-        playlistsCount: 1,
-        createdAt: room.createdAt || Date.now(),
-        source: "room_host",
-      });
-    }
-  }
-
-  return Array.from(usersMap.values());
-}
-
 export async function GET(req: NextRequest) {
   try {
-    const authHeader = req.headers.get("authorization") || req.nextUrl.searchParams.get("token");
+    const authHeader =
+      req.headers.get("authorization") || req.nextUrl.searchParams.get("token");
     if (!authHeader || !authHeader.includes("auxy_adm_")) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    const memoryUsers = collectAllUsers();
+    const supabase = getSupabase();
     const usersMap = new Map<string, Record<string, unknown>>();
 
-    for (const u of memoryUsers) {
-      const key = String(u.username || "").toLowerCase();
-      if (key) usersMap.set(key, u);
-    }
-
-    // Fetch from Supabase PostgreSQL profiles ONLY if table is not marked missing
-    const supabase = getSupabase();
+    // 1. Authoritative: Fetch profiles from Supabase PostgreSQL
     if (supabase && !isTableMarkedMissing("profiles")) {
       try {
-        const remoteProfiles = await withTimeout(
-          (async () => {
-            const { data, error } = await supabase
-              .from("profiles")
-              .select("*")
-              .limit(500);
-            if (error) {
-              if (isTableMissingError(error)) {
-                markTableMissing("profiles");
-              }
-              return [];
-            }
-            return Array.isArray(data) ? data : [];
-          })(),
-          1500,
-          []
-        );
+        const { data: profiles, error: pErr } = await supabase
+          .from("profiles")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .limit(1000);
 
-        for (const p of remoteProfiles) {
-          const key = String(p.username || p.id || "").toLowerCase();
-          if (!key) continue;
-          const existing = usersMap.get(key) || {};
-          usersMap.set(key, {
-            ...existing,
-            id: p.id || existing.id || key,
-            username: p.username || key,
-            displayName: p.display_name || existing.displayName || p.username || key,
-            avatar: p.avatar || (existing.avatar as string) || `https://api.dicebear.com/7.x/bottts/svg?seed=${key}`,
-            bio: p.bio || (existing.bio as string) || "",
-            pronouns: p.pronouns || (existing.pronouns as string) || "",
-            starCount: p.star_count ?? (existing.starCount as number) ?? 0,
-            updatedAt: p.updated_at || p.created_at || existing.updatedAt,
-            source: "supabase",
-          });
+        if (pErr) {
+          if (isTableMissingError(pErr)) {
+            markTableMissing("profiles");
+          }
+          console.warn("[Admin Users API] Error loading Supabase profiles:", pErr);
+        } else if (Array.isArray(profiles)) {
+          for (const p of profiles) {
+            const clean = cleanUsername(p.username || p.id || "");
+            if (!clean) continue;
+
+            usersMap.set(clean, {
+              id: p.id || `usr_${clean}`,
+              username: p.username || clean,
+              displayName: p.display_name || p.username || clean,
+              email: `${clean}@auxy.app`,
+              avatar:
+                p.avatar ||
+                `https://api.dicebear.com/7.x/bottts/svg?seed=${clean}`,
+              bio: p.bio || "",
+              pronouns: p.pronouns || "",
+              starCount: 0,
+              isOnline: false,
+              isPlaying: false,
+              currentTrack: null,
+              roomId: `room_${clean}`,
+              playlistsCount: 1,
+              source: "supabase",
+              createdAt: p.created_at ? new Date(p.created_at).getTime() : Date.now(),
+              updatedAt: p.updated_at || p.created_at,
+            });
+          }
         }
       } catch (err) {
-        if (isTableMissingError(err)) {
-          markTableMissing("profiles");
-        }
-        console.warn("[Admin Users API] Supabase profiles fetch skipped:", err);
+        console.warn("[Admin Users API] Supabase query exception:", err);
       }
     }
 
-    const usersList = Array.from(usersMap.values());
+    // 2. Enrich with live rooms from Supabase listen_together_rooms
+    if (supabase && !isTableMarkedMissing("listen_together_rooms")) {
+      try {
+        const { data: rooms } = await supabase
+          .from("listen_together_rooms")
+          .select("room_id, host_username, enabled, is_playing, current_track")
+          .eq("enabled", true);
+
+        if (Array.isArray(rooms)) {
+          for (const r of rooms) {
+            const hostClean = cleanUsername(String(r.host_username || ""));
+            const existing = usersMap.get(hostClean);
+            if (existing) {
+              existing.isOnline = true;
+              existing.isPlaying = Boolean(r.is_playing);
+              existing.currentTrack = r.current_track || null;
+              existing.roomId = r.room_id || `room_${hostClean}`;
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // 3. Enrich with any live in-memory presence if active on this instance
+    const store = getServerStore();
+    for (const [clean, pres] of store.presence.entries()) {
+      const existing = usersMap.get(clean);
+      if (existing) {
+        const isRecent = pres.isOnline && Date.now() - (pres.lastSeen || 0) < 65000;
+        if (isRecent) {
+          existing.isOnline = true;
+          existing.isPlaying = Boolean(pres.isPlaying);
+          if (pres.currentTrack) existing.currentTrack = pres.currentTrack;
+        }
+      }
+    }
+
     // Sort: Online/Live first, then by username
+    const usersList = Array.from(usersMap.values());
     usersList.sort((a, b) => {
       if (a.isOnline && !b.isOnline) return -1;
       if (!a.isOnline && b.isOnline) return 1;
@@ -211,31 +125,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  try {
-    const authHeader = req.headers.get("authorization");
-    if (!authHeader || !authHeader.includes("auxy_adm_")) {
-      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    }
-
-    const body = await req.json();
-    const clientUsers = Array.isArray(body.localUsers) ? (body.localUsers as UserAccount[]) : [];
-
-    for (const u of clientUsers) {
-      if (u && u.username) {
-        registerOrUpdateUserInServerStore(u);
-      }
-    }
-
-    const memoryUsers = collectAllUsers();
-    return NextResponse.json({
-      ok: true,
-      users: memoryUsers,
-      totalCount: memoryUsers.length,
-    });
-  } catch (err: unknown) {
-    console.error("[Admin Users POST API] Error:", err);
-    return NextResponse.json({ ok: false, users: [] }, { status: 500 });
-  }
+  // Maintained for backward compatibility, returns the authoritative list
+  return GET(req);
 }
 
 export async function DELETE(req: NextRequest) {
@@ -246,12 +137,19 @@ export async function DELETE(req: NextRequest) {
     }
 
     const { searchParams } = new URL(req.url);
-    const username = (searchParams.get("username") || "").trim().toLowerCase();
+    const username = cleanUsername(searchParams.get("username") || "");
 
     if (!username) {
       return NextResponse.json({ ok: false, error: "Username is required" }, { status: 400 });
     }
 
+    // 1. Authoritative: Delete user persistently from Supabase database
+    const deletedInSupabase = await deleteSupabaseUserCompletely(username);
+    if (!deletedInSupabase) {
+      console.warn(`[Admin Users API] Supabase delete returned false for ${username}`);
+    }
+
+    // 2. Clean up local memory presence/rooms
     const store = getServerStore();
     store.users.delete(username);
     store.presence.delete(username);
@@ -259,31 +157,12 @@ export async function DELETE(req: NextRequest) {
     store.liveRooms.delete(`room_${username}`);
     store.liveRooms.delete(username);
 
-    // Also persist deletion
-    try {
-      const filePath = path.join(process.cwd(), ".data", "server-state.json");
-      if (fs.existsSync(filePath)) {
-        const raw = fs.readFileSync(filePath, "utf-8");
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed.users)) {
-          parsed.users = parsed.users.filter(
-            (u: { username?: string }) => String(u.username || "").toLowerCase() !== username
-          );
-          fs.writeFileSync(filePath, JSON.stringify(parsed, null, 2), "utf-8");
-        }
-      }
-    } catch {}
-
-    const memoryUsers = collectAllUsers();
     return NextResponse.json({
       ok: true,
-      message: `User ${username} removed successfully`,
-      users: memoryUsers,
-      totalCount: memoryUsers.length,
+      message: `User @${username} removed successfully from Supabase and system.`,
     });
   } catch (err: unknown) {
     console.error("[Admin Users DELETE API] Error:", err);
     return NextResponse.json({ ok: false, error: "Failed to delete user" }, { status: 500 });
   }
 }
-

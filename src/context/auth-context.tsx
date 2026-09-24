@@ -24,6 +24,7 @@ import {
 } from "@/lib/storage";
 import { getSupabase } from "@/lib/supabase";
 import {
+  syncUserProfileOnly,
   normalizeAndSyncUserProfileToSupabase,
   fetchUserProfileFromSupabase,
 } from "@/lib/supabase-db";
@@ -71,19 +72,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(async () => {
       try {
-        if (typeof window !== "undefined" && nextUser?.username) {
-          // Send lightweight profile representation to explore endpoint
-          void fetch("/api/explore", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(nextUser),
-          }).catch(() => {});
-        }
-        await normalizeAndSyncUserProfileToSupabase(nextUser);
+        await syncUserProfileOnly(nextUser);
       } catch (err) {
-        console.warn("Deferred Supabase sync:", err);
+        console.warn("Deferred Supabase profile sync:", err);
       }
-    }, 1500);
+    }, 1000);
   }, []);
 
   // Initial Data Fetch from localStorage + Supabase sync
@@ -98,12 +91,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (local) {
           const userWithAvatar = withDefaultAvatar(local);
           setUser(userWithAvatar);
-          // Register with server store
+          // Ensure secure session cookie
           if (typeof window !== "undefined") {
-            void fetch("/api/explore", {
+            void fetch("/api/auth/session", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(userWithAvatar),
+              body: JSON.stringify({ username: userWithAvatar.username }),
             }).catch(() => {});
           }
         }
@@ -279,14 +272,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       saveUser(existing);
       setSessionUsername(existing.username);
       setUser(withDefaultAvatar(existing));
-      void normalizeAndSyncUserProfileToSupabase(existing, true);
+      void syncUserProfileOnly(existing);
 
-      // Keep explore/server-store in sync
+      // Establish authenticated session cookie
       try {
-        void fetch("/api/explore", {
+        void fetch("/api/auth/session", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(existing),
+          body: JSON.stringify({ username: existing.username }),
         });
       } catch {}
 
@@ -364,13 +357,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           saveUser(localUser);
           setSessionUsername(localUser.username);
           setUser(localUser);
-          void normalizeAndSyncUserProfileToSupabase(localUser, true);
+          void syncUserProfileOnly(localUser);
 
+          // Establish authenticated session cookie
           try {
-            void fetch("/api/explore", {
+            void fetch("/api/auth/session", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(localUser),
+              body: JSON.stringify({ username: localUser.username }),
             });
           } catch {}
 
@@ -431,13 +425,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       saveUser(existing);
       setSessionUsername(existing.username);
       setUser(withDefaultAvatar(existing));
-      void normalizeAndSyncUserProfileToSupabase(existing, true);
+      void syncUserProfileOnly(existing);
 
       try {
-        void fetch("/api/explore", {
+        void fetch("/api/auth/session", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(existing),
+          body: JSON.stringify({ username: existing.username }),
         });
       } catch {}
 
@@ -494,6 +488,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     setUser(null);
     setSessionUsername(null);
+
+    // Clear server session cookie
+    try {
+      void fetch("/api/auth/session", { method: "DELETE" });
+    } catch {}
 
     const supabase = getSupabase();
     if (supabase) {

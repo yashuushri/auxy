@@ -7,8 +7,8 @@ import {
   deleteRoomRequest,
   getServerRoomSettings,
   updateServerRoomSettings,
-  getFriendshipStatus,
 } from "@/lib/server-store";
+import { getSupabaseFriendshipStatus } from "@/lib/supabase-db";
 import type { RoomRequest } from "@/lib/types";
 
 export async function GET(req: NextRequest) {
@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
 
     if (settings.privacy === "friends") {
       const hostUsername = roomId.replace(/^room_/, "").trim().toLowerCase();
-      const status = getFriendshipStatus(hostUsername, username);
+      const status = await getSupabaseFriendshipStatus(hostUsername, username);
       if (status !== "friends") {
         return NextResponse.json(
           {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import {
   Check,
@@ -11,6 +11,7 @@ import {
   Radio,
   Search,
   UserCheck,
+  UserMinus,
   UserPlus,
   Users,
   X,
@@ -27,6 +28,7 @@ import { JoinRoomRequestModal } from "@/components/join-room-request-modal";
 import { useAuth } from "@/context/auth-context";
 import { useListenTogether } from "@/context/listen-together-context";
 import { DEFAULT_BACKGROUND } from "@/lib/backgrounds";
+import { getSupabase } from "@/lib/supabase";
 import type { PublicProfile, Track } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -103,6 +105,7 @@ export function ExploreDialog({
   const [searching, setSearching] = useState(false);
   const [loading, setLoading] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+  const searchSeqRef = useRef(0);
 
   // Selected host for Join Room Modal
   const [selectedHostProfile, setSelectedHostProfile] = useState<PublicProfile | null>(null);
@@ -130,22 +133,48 @@ export function ExploreDialog({
     }
   }, [user?.username]);
 
-  // Initial load & automatic polling every 4 seconds while open
+  // Load once on dialog open + Supabase Realtime subscription (no 4-second polling loop)
   useEffect(() => {
     if (!open || !user?.username) return;
 
     fetchFriendsData(true);
 
-    const interval = setInterval(() => {
-      fetchFriendsData(false);
-    }, 4000);
+    const supabase = getSupabase();
+    if (!supabase) return;
+
+    const channel = supabase
+      .channel(`friends-dialog-${user.username}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "friend_requests",
+          filter: `to_username=eq.${user.username.toLowerCase()}`,
+        },
+        () => {
+          fetchFriendsData(false);
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "friendships",
+        },
+        () => {
+          fetchFriendsData(false);
+        }
+      )
+      .subscribe();
 
     return () => {
-      clearInterval(interval);
+      void supabase.removeChannel(channel);
     };
   }, [open, user?.username, fetchFriendsData]);
 
-  // Search API effect when query changes
+  // Search API effect with AbortController and race-condition prevention
   useEffect(() => {
     const q = searchQuery.trim();
     if (!q || !user?.username) {
@@ -154,28 +183,35 @@ export function ExploreDialog({
       return;
     }
 
-    let isMounted = true;
+    const currentSeq = ++searchSeqRef.current;
+    const controller = new AbortController();
+
     const timer = setTimeout(async () => {
       setSearching(true);
       try {
         const res = await fetch(
-          `/api/friends?search=${encodeURIComponent(q)}&current=${encodeURIComponent(user.username)}`
+          `/api/friends?search=${encodeURIComponent(q)}&current=${encodeURIComponent(user.username)}`,
+          { signal: controller.signal }
         );
-        if (res.ok && isMounted) {
+        if (res.ok && currentSeq === searchSeqRef.current) {
           const data = await res.json();
           if (data.success && Array.isArray(data.users)) {
             setSearchResults(data.users);
           }
         }
-      } catch (err) {
-        console.warn("Failed to search users:", err);
+      } catch (err: unknown) {
+        if ((err as { name?: string })?.name !== "AbortError") {
+          console.warn("Failed to search users:", err);
+        }
       } finally {
-        if (isMounted) setSearching(false);
+        if (currentSeq === searchSeqRef.current) {
+          setSearching(false);
+        }
       }
     }, 250);
 
     return () => {
-      isMounted = false;
+      controller.abort();
       clearTimeout(timer);
     };
   }, [searchQuery, user?.username]);
@@ -232,6 +268,37 @@ export function ExploreDialog({
       }
     } catch {
       toast.error("Failed to cancel request.");
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  // Handle Remove Friendship
+  const handleRemoveFriend = async (friendUsername: string) => {
+    if (!user) return;
+    const confirmed = window.confirm(`Remove @${friendUsername} from your friends?`);
+    if (!confirmed) return;
+
+    setActionLoadingId(friendUsername);
+    try {
+      const res = await fetch("/api/friends", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "remove",
+          user1: user.username,
+          user2: friendUsername,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast.success(`Removed @${friendUsername} from friends`);
+        await fetchFriendsData(false);
+      } else {
+        toast.error(data.error || "Failed to remove friend");
+      }
+    } catch {
+      toast.error("Failed to remove friend");
     } finally {
       setActionLoadingId(null);
     }
@@ -674,6 +741,15 @@ export function ExploreDialog({
                               Private
                             </span>
                           )}
+
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveFriend(friend.username)}
+                            className="size-8 rounded-lg text-white/40 hover:text-red-400 hover:bg-red-500/10 border border-white/10 transition-colors flex items-center justify-center cursor-pointer"
+                            title={`Remove @${friend.username} from friends`}
+                          >
+                            <UserMinus className="size-3.5" />
+                          </button>
                         </div>
                       </div>
                     );
