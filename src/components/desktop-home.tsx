@@ -39,6 +39,8 @@ import {
   JoinRequestsDialog,
   LeaveRoomDialog,
 } from "@/components/listen-together-dialogs";
+import { UpgradeDialog } from "@/components/upgrade-dialog";
+import { FluidGlassButton } from "@/components/ui/fluid-glass-button";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/auth-context";
 import { useListenTogether } from "@/context/listen-together-context";
@@ -71,6 +73,7 @@ export function DesktopHome() {
   const [requestsOpen, setRequestsOpen] = useState(false);
   const [listenersOpen, setListenersOpen] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [sidebarView, setSidebarView] = useState<"main" | "widget" | "about">("main");
 
   // Active desktop draggable widgets state
@@ -296,6 +299,7 @@ export function DesktopHome() {
       <JoinRequestsDialog open={requestsOpen} onOpenChange={setRequestsOpen} />
       <ActiveListenersDialog open={listenersOpen} onOpenChange={setListenersOpen} />
       <LeaveRoomDialog open={leaveOpen} onOpenChange={setLeaveOpen} />
+      <UpgradeDialog open={upgradeOpen} onOpenChange={setUpgradeOpen} />
 
       {/* Sidebar */}
       <AnimatePresence>
@@ -336,14 +340,20 @@ export function DesktopHome() {
                       <p className="text-sm text-white/50">@{user.username}</p>
                     </div>
                   </div>
-                  <Button
-                    size="icon-sm"
-                    variant="ghost"
-                    className="rounded-full text-white hover:bg-white/10 cursor-pointer"
-                    onClick={() => setSidebarOpen(false)}
-                  >
-                    <X className="size-4" />
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <FluidGlassButton
+                      text="Upgrade"
+                      onClick={() => setUpgradeOpen(true)}
+                    />
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      className="rounded-full text-white hover:bg-white/10 cursor-pointer"
+                      onClick={() => setSidebarOpen(false)}
+                    >
+                      <X className="size-4" />
+                    </Button>
+                  </div>
                 </div>
               ) : (
                 <div className="mb-5 pr-4.5 flex items-center justify-between">
@@ -357,14 +367,20 @@ export function DesktopHome() {
                       {sidebarView === "widget" ? "Widget" : "About"}
                     </span>
                   </button>
-                  <Button
-                    size="icon-sm"
-                    variant="ghost"
-                    className="rounded-full text-white hover:bg-white/10 cursor-pointer"
-                    onClick={() => setSidebarOpen(false)}
-                  >
-                    <X className="size-4" />
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <FluidGlassButton
+                      text="Upgrade"
+                      onClick={() => setUpgradeOpen(true)}
+                    />
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      className="rounded-full text-white hover:bg-white/10 cursor-pointer"
+                      onClick={() => setSidebarOpen(false)}
+                    >
+                      <X className="size-4" />
+                    </Button>
+                  </div>
                 </div>
               )}
 

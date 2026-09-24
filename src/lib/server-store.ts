@@ -211,19 +211,9 @@ export function getServerStore(): ServerStoreState {
       friendRequests: friendRequestsMap,
       backgrounds: backgroundsMap,
     };
-    seedDefaultCommunityRooms(globalStore._auxy_server_store);
   } else {
     if (!globalStore._auxy_server_store.backgrounds) {
       globalStore._auxy_server_store.backgrounds = new Map<string, BackgroundMetadata>();
-    }
-    // Ensure legacy buggy key is cleaned up in existing in-memory store
-    if (globalStore._auxy_server_store.users.has("dealuphymindgmailcom")) {
-      const old = globalStore._auxy_server_store.users.get("dealuphymindgmailcom");
-      globalStore._auxy_server_store.users.delete("dealuphymindgmailcom");
-      if (old && !globalStore._auxy_server_store.users.has("aman")) {
-        old.username = "aman";
-        globalStore._auxy_server_store.users.set("aman", old);
-      }
     }
     // Ensure all maps exist in case of hot-reload with older in-memory store object
     if (!globalStore._auxy_server_store.requests) {
@@ -249,9 +239,6 @@ export function getServerStore(): ServerStoreState {
     }
     if (!globalStore._auxy_server_store.friendRequests) {
       globalStore._auxy_server_store.friendRequests = new Map<string, FriendRequestRecord>();
-    }
-    if (globalStore._auxy_server_store.users.size < 6) {
-      seedDefaultCommunityRooms(globalStore._auxy_server_store);
     }
   }
   return globalStore._auxy_server_store;
@@ -662,341 +649,6 @@ export function updateLiveRoomState(
   store.liveRooms.set(`room_${update.hostUsername.toLowerCase()}`, merged);
 
   return merged;
-}
-
-function seedDefaultCommunityRooms(store: ServerStoreState): void {
-  const now = Date.now();
-
-  const cyberTrack: Track = {
-    id: "track_cyber_1",
-    youtubeId: "4xDzrJKXOOY",
-    title: "Synthwave Radio (Chill Beats)",
-    artist: "Lofi Records",
-    album: "Retrowave Odyssey",
-    cover: "https://img.youtube.com/vi/4xDzrJKXOOY/hqdefault.jpg",
-    duration: 3600,
-  };
-
-  const lunaTrack: Track = {
-    id: "track_luna_1",
-    youtubeId: "jfKfPfyJRdk",
-    title: "Lofi Girl (Beats to Relax/Study)",
-    artist: "Lofi Records",
-    album: "Study Session",
-    cover: "https://img.youtube.com/vi/jfKfPfyJRdk/hqdefault.jpg",
-    duration: 3600,
-  };
-
-  const pulseTrack: Track = {
-    id: "track_pulse_1",
-    youtubeId: "5rm434OjU4I",
-    title: "Resonance",
-    artist: "HOME",
-    album: "Odyssey",
-    cover: "https://img.youtube.com/vi/5rm434OjU4I/hqdefault.jpg",
-    duration: 212,
-  };
-
-  const defaultUsers: Array<{
-    username: string;
-    displayName: string;
-    bio: string;
-    pronouns?: string;
-    avatar: string;
-    background: Background;
-    track: Track;
-    position: number;
-    starCount?: number;
-  }> = [
-    {
-      username: "cyber",
-      displayName: "Cyber Runner",
-      bio: "Cruising neon highways with retrowave and synthwave grooves.",
-      pronouns: "he/him",
-      avatar: "https://api.dicebear.com/7.x/bottts/svg?seed=cyber",
-      background: { kind: "preset", value: "lava" },
-      track: cyberTrack,
-      position: 120,
-      starCount: 14,
-    },
-    {
-      username: "luna",
-      displayName: "Luna 🌙",
-      bio: "Midnight lofi vibes, warm tea, and rainy coding sessions.",
-      pronouns: "she/her",
-      avatar: "https://api.dicebear.com/7.x/bottts/svg?seed=luna",
-      background: { kind: "preset", value: "#0b0b12" },
-      track: lunaTrack,
-      position: 240,
-      starCount: 28,
-    },
-    {
-      username: "pulse",
-      displayName: "Pulse ⚡",
-      bio: "Deep sonic beats and chillwave ambient waves.",
-      pronouns: "they/them",
-      avatar: "https://api.dicebear.com/7.x/bottts/svg?seed=pulse",
-      background: { kind: "preset", value: "#141424" },
-      track: pulseTrack,
-      position: 45,
-      starCount: 9,
-    },
-    {
-      username: "zen_beats",
-      displayName: "Zen Beats 🍵",
-      bio: "Mindful chillhop, peaceful meditation, and acoustic morning coffee.",
-      pronouns: "he/him",
-      avatar: "https://api.dicebear.com/7.x/bottts/svg?seed=zen_beats",
-      background: { kind: "preset", value: "#0d1b1e" },
-      track: {
-        id: "track_zen_1",
-        youtubeId: "5yx6BWlEVcY",
-        title: "Chillhop Radio - Jazzy & Lofi Hip Hop",
-        artist: "Chillhop Music",
-        album: "Coffeehouse Sessions",
-        cover: "https://img.youtube.com/vi/5yx6BWlEVcY/hqdefault.jpg",
-        duration: 3600,
-      },
-      position: 310,
-      starCount: 19,
-    },
-    {
-      username: "alex_lofi",
-      displayName: "Alex Lofi 🎧",
-      bio: "Late night coding playlists, vintage vinyl warmth, and rainy window panes.",
-      pronouns: "they/he",
-      avatar: "https://api.dicebear.com/7.x/bottts/svg?seed=alex_lofi",
-      background: { kind: "preset", value: "#1a102f" },
-      track: {
-        id: "track_alex_1",
-        youtubeId: "TURbeWK2wwg",
-        title: "Japanese Garden - Asian Lofi Chill",
-        artist: "Tokyo Nights",
-        album: "Zen Garden",
-        cover: "https://img.youtube.com/vi/TURbeWK2wwg/hqdefault.jpg",
-        duration: 2400,
-      },
-      position: 85,
-      starCount: 12,
-    },
-    {
-      username: "kai_soundscapes",
-      displayName: "Kai Soundscapes 🌊",
-      bio: "Coastal ambient textures, melodic downtempo, and deep flow state rhythms.",
-      pronouns: "he/him",
-      avatar: "https://api.dicebear.com/7.x/bottts/svg?seed=kai_soundscapes",
-      background: { kind: "preset", value: "#061826" },
-      track: {
-        id: "track_kai_1",
-        youtubeId: "DWcJFNfaw9c",
-        title: "Sleep & Deep Focus Ambient Music",
-        artist: "Yellow Brick Cinema",
-        album: "Ocean Waves",
-        cover: "https://img.youtube.com/vi/DWcJFNfaw9c/hqdefault.jpg",
-        duration: 7200,
-      },
-      position: 180,
-      starCount: 22,
-    },
-    {
-      username: "mira_vibes",
-      displayName: "Mira Vibes ✨",
-      bio: "Indie dream-pop, bedroom lofi, and golden hour melodies.",
-      pronouns: "she/they",
-      avatar: "https://api.dicebear.com/7.x/bottts/svg?seed=mira_vibes",
-      background: { kind: "preset", value: "#260c1a" },
-      track: {
-        id: "track_mira_1",
-        youtubeId: "2atQnvunGCo",
-        title: "Golden Hour - Indie Chill Beats",
-        artist: "Sunset Collective",
-        album: "Afterglow",
-        cover: "https://img.youtube.com/vi/2atQnvunGCo/hqdefault.jpg",
-        duration: 1800,
-      },
-      position: 60,
-      starCount: 17,
-    },
-    {
-      username: "elena_synth",
-      displayName: "Elena Synth 🎹",
-      bio: "Hardware modular synths, analog tape delays, and cyberpunk nightscapes.",
-      pronouns: "she/her",
-      avatar: "https://api.dicebear.com/7.x/bottts/svg?seed=elena_synth",
-      background: { kind: "preset", value: "lava" },
-      track: {
-        id: "track_elena_1",
-        youtubeId: "MVPTGNGiI-4",
-        title: "Night City - Synthwave Chill",
-        artist: "Retro Dreamer",
-        album: "Neon Grid",
-        cover: "https://img.youtube.com/vi/MVPTGNGiI-4/hqdefault.jpg",
-        duration: 2100,
-      },
-      position: 140,
-      starCount: 31,
-    },
-    {
-      username: "ryu_ambient",
-      displayName: "Ryu 🎋",
-      bio: "Traditional koto & flute meets soft ambient hip hop. Tokyo soundscape.",
-      pronouns: "he/him",
-      avatar: "https://api.dicebear.com/7.x/bottts/svg?seed=ryu_ambient",
-      background: { kind: "preset", value: "#0e1a14" },
-      track: {
-        id: "track_ryu_1",
-        youtubeId: "81wbz6eE6yU",
-        title: "Kyoto Sunset - Asian Lo-fi Chill",
-        artist: "Lofi Beats Kyoto",
-        album: "Bamboo Groove",
-        cover: "https://img.youtube.com/vi/81wbz6eE6yU/hqdefault.jpg",
-        duration: 2700,
-      },
-      position: 95,
-      starCount: 15,
-    },
-    {
-      username: "nova_wave",
-      displayName: "Nova Wave 🌌",
-      bio: "Cosmic chill, space ambient, and zero-gravity floating frequencies.",
-      pronouns: "they/them",
-      avatar: "https://api.dicebear.com/7.x/bottts/svg?seed=nova_wave",
-      background: { kind: "preset", value: "#0c0d21" },
-      track: {
-        id: "track_nova_1",
-        youtubeId: "WPni755-Krg",
-        title: "Space Ambient - Deep Universe Odyssey",
-        artist: "Stargazer",
-        album: "Nebula Dreams",
-        cover: "https://img.youtube.com/vi/WPni755-Krg/hqdefault.jpg",
-        duration: 3600,
-      },
-      position: 210,
-      starCount: 25,
-    },
-    {
-      username: "sam_chill",
-      displayName: "Sam Chill ☕",
-      bio: "Sunday morning acoustic guitars, smooth jazz beats, and cozy warm blanket vibes.",
-      pronouns: "he/him",
-      avatar: "https://api.dicebear.com/7.x/bottts/svg?seed=sam_chill",
-      background: { kind: "preset", value: "#1f1811" },
-      track: {
-        id: "track_sam_1",
-        youtubeId: "lTRiuFIWV54",
-        title: "Coffee Shop Cozy Jazz & Lofi",
-        artist: "Cafe Music BGM",
-        album: "Sunday Relax",
-        cover: "https://img.youtube.com/vi/lTRiuFIWV54/hqdefault.jpg",
-        duration: 4800,
-      },
-      position: 130,
-      starCount: 11,
-    },
-    {
-      username: "maya_grooves",
-      displayName: "Maya Grooves 🌺",
-      bio: "Tropical downtempo, balearic chill, and beach sunset deep sessions.",
-      pronouns: "she/her",
-      avatar: "https://api.dicebear.com/7.x/bottts/svg?seed=maya_grooves",
-      background: { kind: "preset", value: "#1d0e1c" },
-      track: {
-        id: "track_maya_1",
-        youtubeId: "W6YI3ZFOLUc",
-        title: "Deep House Sunset Relax",
-        artist: "Island Sounds",
-        album: "Baleric Sunset",
-        cover: "https://img.youtube.com/vi/W6YI3ZFOLUc/hqdefault.jpg",
-        duration: 3200,
-      },
-      position: 75,
-      starCount: 20,
-    },
-  ];
-
-  for (const item of defaultUsers) {
-    const clean = item.username.toLowerCase();
-    const roomId = `room_${clean}`;
-
-    // Add user account
-    store.users.set(clean, {
-      id: `usr_${clean}`,
-      username: clean,
-      displayName: item.displayName,
-      email: `${clean}@auxy.app`,
-      emailVerified: true,
-      avatar: item.avatar,
-      bio: item.bio,
-      pronouns: item.pronouns,
-      background: item.background,
-      volume: 80,
-      playlists: [
-        {
-          id: `pl_${clean}`,
-          name: `${item.displayName}'s Mix`,
-          description: "Curated live stream tracks",
-          isPublic: true,
-          trackIds: [item.track.id],
-        },
-      ],
-      library: [item.track],
-      createdAt: now,
-    });
-
-    // Add presence record
-    store.presence.set(clean, {
-      id: `usr_${clean}`,
-      username: clean,
-      displayName: item.displayName,
-      avatar: item.avatar,
-      bio: item.bio,
-      pronouns: item.pronouns,
-      starCount: item.starCount || 0,
-      background: item.background,
-      lastSeen: now,
-      isOnline: true,
-      isPlaying: true,
-      currentTrack: item.track,
-      roomId,
-      listenTogetherEnabled: true,
-    });
-
-    // Add room record
-    store.rooms.set(roomId, {
-      id: roomId,
-      name: `${item.displayName}'s Room`,
-      hostId: `usr_${clean}`,
-      hostUsername: clean,
-      currentTrack: item.track,
-      isPlaying: true,
-      position: item.position,
-      participantCount: 2,
-      createdAt: now,
-      updatedAt: now,
-      listenTogetherEnabled: true,
-      privacy: "public",
-      autoAccept: true,
-      playlistTracks: [item.track],
-    });
-
-    // Add live playback state
-    const liveState: LivePlaybackState = {
-      roomId,
-      hostUsername: clean,
-      hostDisplayName: item.displayName,
-      hostAvatar: item.avatar,
-      currentTrack: item.track,
-      isPlaying: true,
-      positionSeconds: item.position,
-      updatedAt: now,
-      playlistTracks: [item.track],
-      playlistName: `${item.displayName}'s Mix`,
-      background: item.background,
-      stateVersion: 1,
-    };
-    store.liveRooms.set(roomId, liveState);
-    store.liveRooms.set(`room_${clean}`, liveState);
-  }
 }
 
 // ============================================================================
@@ -1423,6 +1075,19 @@ export function deleteBackgroundFromStore(idOrUrl: string): boolean {
 export function clearAllBackgroundsFromStore(): void {
   const store = getServerStore();
   store.backgrounds.clear();
+  schedulePersist();
+}
+
+export function clearAllUserDataAndRooms(): void {
+  const store = getServerStore();
+  store.users.clear();
+  store.presence.clear();
+  store.rooms.clear();
+  store.requests.clear();
+  store.roomSettings.clear();
+  store.liveRooms.clear();
+  store.friendships.clear();
+  store.friendRequests.clear();
   schedulePersist();
 }
 

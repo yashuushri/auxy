@@ -2,8 +2,27 @@ import { DEFAULT_BACKGROUND } from "@/lib/backgrounds";
 import { colorFromName } from "@/lib/music";
 import type { Track, UserAccount } from "@/lib/types";
 
-const USERS_KEY = "auxy_users_v3";
-const SESSION_KEY = "auxy_session_v3";
+const USERS_KEY = "auxy_users_v4";
+const SESSION_KEY = "auxy_session_v4";
+
+// Clean launch: automatically purge previous test data from local storage
+if (typeof window !== "undefined") {
+  try {
+    const legacyKeys = [
+      "auxy_users_v1",
+      "auxy_users_v2",
+      "auxy_users_v3",
+      "auxy_session_v1",
+      "auxy_session_v2",
+      "auxy_session_v3",
+      "auxy_supabase_synced_hash_v1",
+      "auxy_active_playlist_id",
+      "auxy_cached_playlists",
+      "auxy_cached_library",
+    ];
+    legacyKeys.forEach((key) => localStorage.removeItem(key));
+  } catch {}
+}
 
 function readUsers(): Record<string, UserAccount> {
   if (typeof window === "undefined") return {};
