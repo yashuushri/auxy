@@ -119,6 +119,8 @@ export async function POST(req: NextRequest) {
         status: res.status,
         requestId: res.requestId,
         error: res.error,
+        dbError: res.dbError,
+        errorCode: res.errorCode,
       });
 
       // Ensure session cookie is set

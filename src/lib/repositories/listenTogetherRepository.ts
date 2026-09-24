@@ -90,7 +90,7 @@ export const listenTogetherRepository = {
   },
 
   async getRequests(roomId: string): Promise<RoomRequest[]> {
-    const supabase = getSupabase();
+    const supabase = getSupabase(true);
     if (!supabase || !roomId) return [];
     try {
       const { data, error } = await supabase
@@ -104,10 +104,10 @@ export const listenTogetherRepository = {
       return data.map((r) => ({
         id: r.id,
         roomId: r.room_id,
-        userId: r.requester_id,
-        username: r.requester_username || r.requester_id,
-        displayName: r.requester_display_name || r.requester_username || r.requester_id,
-        avatar: r.requester_avatar || "",
+        userId: r.user_id || r.requester_id || r.username,
+        username: r.username || r.requester_username || r.user_id,
+        displayName: r.display_name || r.requester_display_name || r.username,
+        avatar: r.avatar || r.requester_avatar || "",
         status: (r.status === "rejected" ? "declined" : r.status) as "pending" | "accepted" | "declined",
         createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
       }));
@@ -127,23 +127,41 @@ export const listenTogetherRepository = {
     displayName: string;
     avatar?: string;
   }): Promise<void> {
-    const supabase = getSupabase();
+    const supabase = getSupabase(true);
     if (!supabase || !req.id || !req.roomId) return;
     try {
-      await supabase.from("listen_together_requests").upsert(
+      const now = new Date().toISOString();
+      const { error: insErr } = await supabase.from("listen_together_requests").upsert(
         {
           id: req.id,
           room_id: req.roomId,
-          requester_id: req.userId,
-          requester_username: req.username,
-          requester_display_name: req.displayName,
-          requester_avatar: req.avatar || "",
+          user_id: req.userId,
+          username: req.username,
+          display_name: req.displayName,
+          avatar: req.avatar || "",
           status: "pending",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
+          created_at: now,
+          updated_at: now,
         },
         { onConflict: "id" }
       );
+
+      if (insErr && (insErr.code === "42703" || insErr.message?.includes("column"))) {
+        await supabase.from("listen_together_requests").upsert(
+          {
+            id: req.id,
+            room_id: req.roomId,
+            requester_id: req.userId,
+            requester_username: req.username,
+            requester_display_name: req.displayName,
+            requester_avatar: req.avatar || "",
+            status: "pending",
+            created_at: now,
+            updated_at: now,
+          },
+          { onConflict: "id" }
+        );
+      }
     } catch (err) {
       if (!isTableMissingError(err)) {
         console.warn("[ListenTogetherRepository] createRequest error:", err);
@@ -152,10 +170,10 @@ export const listenTogetherRepository = {
   },
 
   async updateRequestStatus(requestId: string, status: "accepted" | "declined"): Promise<void> {
-    const supabase = getSupabase();
+    const supabase = getSupabase(true);
     if (!supabase || !requestId) return;
     try {
-      const dbStatus = status === "declined" ? "rejected" : status;
+      const dbStatus = status === "declined" ? "declined" : status;
       await supabase
         .from("listen_together_requests")
         .update({ status: dbStatus, updated_at: new Date().toISOString() })

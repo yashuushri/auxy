@@ -125,6 +125,13 @@ CREATE TABLE IF NOT EXISTS public.friendships (
   UNIQUE (user1, user2)
 );
 
+-- Ensure all possible friendship columns exist even if table pre-existed
+ALTER TABLE public.friendships ADD COLUMN IF NOT EXISTS user1 TEXT;
+ALTER TABLE public.friendships ADD COLUMN IF NOT EXISTS user2 TEXT;
+ALTER TABLE public.friendships ADD COLUMN IF NOT EXISTS user_id TEXT;
+ALTER TABLE public.friendships ADD COLUMN IF NOT EXISTS friend_id TEXT;
+ALTER TABLE public.friendships ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+
 -- 10. Friend Requests (Authoritative Request Inbox / Outbox)
 CREATE TABLE IF NOT EXISTS public.friend_requests (
   id TEXT PRIMARY KEY,
@@ -138,6 +145,55 @@ CREATE TABLE IF NOT EXISTS public.friend_requests (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Ensure all possible friend_requests columns exist even if table pre-existed
+ALTER TABLE public.friend_requests ADD COLUMN IF NOT EXISTS from_username TEXT;
+ALTER TABLE public.friend_requests ADD COLUMN IF NOT EXISTS from_display_name TEXT;
+ALTER TABLE public.friend_requests ADD COLUMN IF NOT EXISTS from_avatar TEXT;
+ALTER TABLE public.friend_requests ADD COLUMN IF NOT EXISTS to_username TEXT;
+ALTER TABLE public.friend_requests ADD COLUMN IF NOT EXISTS to_display_name TEXT;
+ALTER TABLE public.friend_requests ADD COLUMN IF NOT EXISTS to_avatar TEXT;
+ALTER TABLE public.friend_requests ADD COLUMN IF NOT EXISTS sender_id TEXT;
+ALTER TABLE public.friend_requests ADD COLUMN IF NOT EXISTS receiver_id TEXT;
+ALTER TABLE public.friend_requests ADD COLUMN IF NOT EXISTS requester_id TEXT;
+ALTER TABLE public.friend_requests ADD COLUMN IF NOT EXISTS recipient_id TEXT;
+ALTER TABLE public.friend_requests ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'pending';
+ALTER TABLE public.friend_requests ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE public.friend_requests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+-- Ensure all listen_together columns exist even if tables pre-existed
+ALTER TABLE public.listen_together_requests ADD COLUMN IF NOT EXISTS requester_id TEXT;
+ALTER TABLE public.listen_together_requests ADD COLUMN IF NOT EXISTS requester_username TEXT;
+ALTER TABLE public.listen_together_requests ADD COLUMN IF NOT EXISTS requester_display_name TEXT;
+ALTER TABLE public.listen_together_requests ADD COLUMN IF NOT EXISTS requester_avatar TEXT;
+ALTER TABLE public.listen_together_requests ADD COLUMN IF NOT EXISTS user_id TEXT;
+ALTER TABLE public.listen_together_requests ADD COLUMN IF NOT EXISTS username TEXT;
+ALTER TABLE public.listen_together_requests ADD COLUMN IF NOT EXISTS display_name TEXT;
+ALTER TABLE public.listen_together_requests ADD COLUMN IF NOT EXISTS avatar TEXT;
+
+-- Backfill from_username and to_username if sender_id / receiver_id exist
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_schema = 'public' AND table_name = 'friend_requests' AND column_name = 'sender_id'
+  ) THEN
+    UPDATE public.friend_requests fr
+    SET from_username = COALESCE(fr.from_username, p.username, fr.sender_id)
+    FROM public.profiles p
+    WHERE fr.sender_id = p.id AND (fr.from_username IS NULL OR fr.from_username = '');
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_schema = 'public' AND table_name = 'friend_requests' AND column_name = 'receiver_id'
+  ) THEN
+    UPDATE public.friend_requests fr
+    SET to_username = COALESCE(fr.to_username, p.username, fr.receiver_id)
+    FROM public.profiles p
+    WHERE fr.receiver_id = p.id AND (fr.to_username IS NULL OR fr.to_username = '');
+  END IF;
+END $$;
 
 -- ==============================================================================
 -- DATABASE INDEXES FOR LIGHTNING FAST QUERIES & USER SEARCH
@@ -157,6 +213,15 @@ CREATE INDEX IF NOT EXISTS idx_friendships_user2 ON public.friendships(LOWER(use
 CREATE INDEX IF NOT EXISTS idx_friend_requests_to ON public.friend_requests(LOWER(to_username), status);
 CREATE INDEX IF NOT EXISTS idx_friend_requests_from ON public.friend_requests(LOWER(from_username), status);
 CREATE INDEX IF NOT EXISTS idx_friend_requests_status ON public.friend_requests(status);
+
+-- ==============================================================================
+-- ROLE GRANTS (Ensure anon, authenticated, and service_role have full access)
+-- ==============================================================================
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
 
 -- ==============================================================================
 -- ROW LEVEL SECURITY (RLS)
@@ -179,53 +244,51 @@ BEGIN
   DROP POLICY IF EXISTS "profiles_select" ON public.profiles;
   DROP POLICY IF EXISTS "profiles_insert" ON public.profiles;
   DROP POLICY IF EXISTS "profiles_update" ON public.profiles;
-  CREATE POLICY "profiles_select" ON public.profiles FOR SELECT USING (true);
-  CREATE POLICY "profiles_insert" ON public.profiles FOR INSERT WITH CHECK (true);
-  CREATE POLICY "profiles_update" ON public.profiles FOR UPDATE USING (true) WITH CHECK (true);
+  DROP POLICY IF EXISTS "profiles_all" ON public.profiles;
+  CREATE POLICY "profiles_all" ON public.profiles FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
 
   -- Playlists: Public read & mutation access
   DROP POLICY IF EXISTS "Playlists Public Access" ON public.playlists;
   DROP POLICY IF EXISTS "playlists_all" ON public.playlists;
-  CREATE POLICY "playlists_all" ON public.playlists FOR ALL USING (true) WITH CHECK (true);
+  CREATE POLICY "playlists_all" ON public.playlists FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
 
   -- Tracks: Public read & mutation access
   DROP POLICY IF EXISTS "Tracks Public Access" ON public.tracks;
   DROP POLICY IF EXISTS "tracks_all" ON public.tracks;
-  CREATE POLICY "tracks_all" ON public.tracks FOR ALL USING (true) WITH CHECK (true);
+  CREATE POLICY "tracks_all" ON public.tracks FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
 
   -- Playlist Tracks: Public read & mutation access
   DROP POLICY IF EXISTS "Playlist Tracks Public Access" ON public.playlist_tracks;
   DROP POLICY IF EXISTS "playlist_tracks_all" ON public.playlist_tracks;
-  CREATE POLICY "playlist_tracks_all" ON public.playlist_tracks FOR ALL USING (true) WITH CHECK (true);
+  CREATE POLICY "playlist_tracks_all" ON public.playlist_tracks FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
 
   -- Stars: Public read & mutation access
   DROP POLICY IF EXISTS "Stars Public Access" ON public.stars;
   DROP POLICY IF EXISTS "stars_all" ON public.stars;
-  CREATE POLICY "stars_all" ON public.stars FOR ALL USING (true) WITH CHECK (true);
+  CREATE POLICY "stars_all" ON public.stars FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
 
   -- Listen Together Rooms
   DROP POLICY IF EXISTS "Rooms Public Access" ON public.listen_together_rooms;
   DROP POLICY IF EXISTS "rooms_all" ON public.listen_together_rooms;
-  CREATE POLICY "rooms_all" ON public.listen_together_rooms FOR ALL USING (true) WITH CHECK (true);
+  CREATE POLICY "rooms_all" ON public.listen_together_rooms FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
 
   -- Listen Together Requests
   DROP POLICY IF EXISTS "Requests Public Access" ON public.listen_together_requests;
   DROP POLICY IF EXISTS "requests_all" ON public.listen_together_requests;
-  CREATE POLICY "requests_all" ON public.listen_together_requests FOR ALL USING (true) WITH CHECK (true);
+  CREATE POLICY "requests_all" ON public.listen_together_requests FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
 
   -- Backgrounds
   DROP POLICY IF EXISTS "Backgrounds Public Access" ON public.backgrounds;
   DROP POLICY IF EXISTS "backgrounds_all" ON public.backgrounds;
-  CREATE POLICY "backgrounds_all" ON public.backgrounds FOR ALL USING (true) WITH CHECK (true);
+  CREATE POLICY "backgrounds_all" ON public.backgrounds FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
 
   -- Friendships: Authenticated social relationships
   DROP POLICY IF EXISTS "Friendships Public Access" ON public.friendships;
   DROP POLICY IF EXISTS "friendships_select" ON public.friendships;
   DROP POLICY IF EXISTS "friendships_insert" ON public.friendships;
   DROP POLICY IF EXISTS "friendships_delete" ON public.friendships;
-  CREATE POLICY "friendships_select" ON public.friendships FOR SELECT USING (true);
-  CREATE POLICY "friendships_insert" ON public.friendships FOR INSERT WITH CHECK (LOWER(user1) != LOWER(user2));
-  CREATE POLICY "friendships_delete" ON public.friendships FOR DELETE USING (true);
+  DROP POLICY IF EXISTS "friendships_all" ON public.friendships;
+  CREATE POLICY "friendships_all" ON public.friendships FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
 
   -- Friend Requests: Managed inbox/outbox
   DROP POLICY IF EXISTS "Friend Requests Public Access" ON public.friend_requests;
@@ -233,8 +296,10 @@ BEGIN
   DROP POLICY IF EXISTS "friend_requests_insert" ON public.friend_requests;
   DROP POLICY IF EXISTS "friend_requests_update" ON public.friend_requests;
   DROP POLICY IF EXISTS "friend_requests_delete" ON public.friend_requests;
-  CREATE POLICY "friend_requests_select" ON public.friend_requests FOR SELECT USING (true);
-  CREATE POLICY "friend_requests_insert" ON public.friend_requests FOR INSERT WITH CHECK (LOWER(from_username) != LOWER(to_username));
-  CREATE POLICY "friend_requests_update" ON public.friend_requests FOR UPDATE USING (true) WITH CHECK (status IN ('pending', 'accepted', 'declined'));
-  CREATE POLICY "friend_requests_delete" ON public.friend_requests FOR DELETE USING (true);
+  DROP POLICY IF EXISTS "friend_requests_all" ON public.friend_requests;
+  CREATE POLICY "friend_requests_all" ON public.friend_requests FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
 END $$;
+
+-- Reload PostgREST schema cache to ensure all newly created tables and columns are immediately visible
+NOTIFY pgrst, 'reload schema';
+

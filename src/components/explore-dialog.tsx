@@ -336,6 +336,9 @@ export function ExploreDialog({
         );
         await fetchFriendsData(false);
       } else {
+        if (data?.dbError) {
+          console.error("[Explore Safe Diagnostic] Friend request DB error:", data.error, data.dbError, data.errorCode);
+        }
         toast.error(data.error || "Failed to send friend request.");
       }
     } catch {
