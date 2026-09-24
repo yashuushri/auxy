@@ -317,28 +317,32 @@ export function ExploreDialog({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "request",
-          fromUsername: user.username,
-          fromDisplayName: user.displayName,
-          fromAvatar: user.avatar,
           toUsername: targetUsername,
         }),
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        toast.success(`Friend request sent to @${targetUsername}`);
-        // update search result state locally
-        setSearchResults((prev) =>
-          prev.map((u) =>
-            u.username.toLowerCase() === targetUsername.toLowerCase()
-              ? { ...u, friendStatus: "pending_sent" }
-              : u
-          )
-        );
+        if (data.status === "friends") {
+          toast.success(`You and @${targetUsername} are now friends!`);
+          setSearchResults((prev) =>
+            prev.map((u) =>
+              u.username.toLowerCase() === targetUsername.toLowerCase()
+                ? { ...u, friendStatus: "friends" }
+                : u
+            )
+          );
+        } else {
+          toast.success(data.message || `Friend request sent to @${targetUsername}`);
+          setSearchResults((prev) =>
+            prev.map((u) =>
+              u.username.toLowerCase() === targetUsername.toLowerCase()
+                ? { ...u, friendStatus: "pending_sent", requestId: data.requestId }
+                : u
+            )
+          );
+        }
         await fetchFriendsData(false);
       } else {
-        if (data?.dbError) {
-          console.error("[Explore Safe Diagnostic] Friend request DB error:", data.error, data.dbError, data.errorCode);
-        }
         toast.error(data.error || "Failed to send friend request.");
       }
     } catch {

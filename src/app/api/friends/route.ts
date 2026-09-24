@@ -82,35 +82,27 @@ export async function POST(req: NextRequest) {
 
     // ACTION 1: SEND FRIEND REQUEST
     if (action === "request") {
-      const bodyFrom = cleanUsername(String(body.fromUsername || ""));
       const toUsername = cleanUsername(String(body.toUsername || ""));
-      const fromDisplayName =
-        typeof body.fromDisplayName === "string" ? body.fromDisplayName : undefined;
-      const fromAvatar =
-        typeof body.fromAvatar === "string" ? body.fromAvatar : undefined;
+      const bodyFrom = cleanUsername(String(body.fromUsername || ""));
 
-      // Authorize: If session user exists, it must match or override bodyFrom
-      const effectiveSender = verifiedSessionUser || bodyFrom;
-      if (!effectiveSender || !toUsername) {
+      // Determine currentUser from authenticated session; fallback to bodyFrom if cookie absent
+      const currentUser = verifiedSessionUser || bodyFrom;
+      if (!currentUser) {
         return NextResponse.json(
-          { error: "fromUsername and toUsername required" },
+          { success: false, error: "Please sign in to send a friend request." },
+          { status: 401 }
+        );
+      }
+
+      if (!toUsername) {
+        return NextResponse.json(
+          { success: false, error: "Target username is required." },
           { status: 400 }
         );
       }
 
-      if (verifiedSessionUser && bodyFrom && verifiedSessionUser !== bodyFrom) {
-        return NextResponse.json(
-          { error: "Unauthorized sender" },
-          { status: 403 }
-        );
-      }
-
       const res = await createSupabaseFriendRequest(
-        {
-          username: effectiveSender,
-          displayName: fromDisplayName || effectiveSender,
-          avatar: fromAvatar || "",
-        },
+        { username: currentUser },
         toUsername
       );
 
@@ -119,15 +111,14 @@ export async function POST(req: NextRequest) {
         status: res.status,
         requestId: res.requestId,
         error: res.error,
-        dbError: res.dbError,
-        errorCode: res.errorCode,
+        message: res.message,
       });
 
       // Ensure session cookie is set
-      if (!req.cookies.get("auxy_session")?.value && effectiveSender) {
+      if (!req.cookies.get("auxy_session")?.value && currentUser) {
         response.cookies.set({
           name: "auxy_session",
-          value: createAuthSessionToken(effectiveSender),
+          value: createAuthSessionToken(currentUser),
           path: "/",
           sameSite: "lax",
           maxAge: 30 * 24 * 60 * 60,
@@ -142,28 +133,28 @@ export async function POST(req: NextRequest) {
       const requestId = String(body.requestId || "").trim();
       const responseAction = body.response === "accept" ? "accept" : "decline";
       const bodyUsername = cleanUsername(String(body.username || ""));
-      const effectiveRecipient = verifiedSessionUser || bodyUsername;
+      const currentUser = verifiedSessionUser || bodyUsername;
 
       if (!requestId) {
-        return NextResponse.json({ error: "requestId required" }, { status: 400 });
+        return NextResponse.json({ success: false, error: "requestId required" }, { status: 400 });
       }
 
-      if (!effectiveRecipient) {
+      if (!currentUser) {
         return NextResponse.json(
-          { error: "Authentication required to respond to friend requests" },
+          { success: false, error: "Authentication required to respond to friend requests." },
           { status: 401 }
         );
       }
 
       const res = await respondSupabaseFriendRequest(
         requestId,
-        effectiveRecipient,
+        currentUser,
         responseAction
       );
 
       if (!res.success) {
         return NextResponse.json(
-          { success: false, error: res.error || "Failed to process request" },
+          { success: false, error: res.error || "Failed to process request." },
           { status: 400 }
         );
       }
@@ -174,23 +165,19 @@ export async function POST(req: NextRequest) {
     // ACTION 3: CANCEL OUTGOING FRIEND REQUEST
     if (action === "cancel") {
       const requestId = typeof body.requestId === "string" ? body.requestId.trim() : undefined;
-      const bodyFrom = cleanUsername(String(body.fromUsername || ""));
       const toUsername = typeof body.toUsername === "string" ? cleanUsername(body.toUsername) : undefined;
-      const effectiveSender = verifiedSessionUser || bodyFrom;
+      const bodyFrom = cleanUsername(String(body.fromUsername || ""));
+      const currentUser = verifiedSessionUser || bodyFrom;
 
-      if (!effectiveSender) {
+      if (!currentUser) {
         return NextResponse.json(
-          { error: "Authentication required to cancel request" },
+          { success: false, error: "Authentication required to cancel request." },
           { status: 401 }
         );
       }
 
-      if (verifiedSessionUser && bodyFrom && verifiedSessionUser !== bodyFrom) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
-      }
-
       const res = await cancelSupabaseFriendRequest(
-        effectiveSender,
+        currentUser,
         requestId,
         toUsername
       );
@@ -202,29 +189,29 @@ export async function POST(req: NextRequest) {
     if (action === "remove") {
       const user1 = cleanUsername(String(body.user1 || ""));
       const user2 = cleanUsername(String(body.user2 || ""));
-      const effectiveUser = verifiedSessionUser || user1;
+      const currentUser = verifiedSessionUser || user1;
 
       if (!user1 || !user2) {
-        return NextResponse.json({ error: "user1 and user2 required" }, { status: 400 });
+        return NextResponse.json({ success: false, error: "user1 and user2 required." }, { status: 400 });
       }
 
-      if (verifiedSessionUser && verifiedSessionUser !== user1 && verifiedSessionUser !== user2) {
+      if (!currentUser) {
         return NextResponse.json(
-          { error: "Unauthorized to delete this friendship" },
-          { status: 403 }
+          { success: false, error: "Authentication required to remove friendship." },
+          { status: 401 }
         );
       }
 
-      const res = await removeSupabaseFriendship(user1, user2, effectiveUser);
+      const res = await removeSupabaseFriendship(user1, user2, currentUser);
       return NextResponse.json({ success: res.success, error: res.error });
     }
 
-    return NextResponse.json({ error: `Unknown action "${action}"` }, { status: 400 });
+    return NextResponse.json({ success: false, error: `Unknown action "${action}"` }, { status: 400 });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
-    console.error("[Friends API] POST Error:", err);
+    console.error("[Friend Request Error]", err);
     return NextResponse.json(
-      { error: "Failed to process friend action in database", details: errorMsg },
+      { success: false, error: "Failed to process friend action in database", details: errorMsg },
       { status: 500 }
     );
   }

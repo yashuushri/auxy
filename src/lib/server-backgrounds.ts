@@ -15,7 +15,7 @@ const DEFAULT_BACKGROUND_METADATA: BackgroundMetadata[] = [
     id: "bg-hatsune-miku",
     name: "Hatsune Miku",
     videoUrl:
-      "https://cdn.discordapp.com/attachments/1551956541219934299/1552285277236494346/Hatsune_Miku.mp4?ex=6ab50dd2&is=6ab3bc52&hm=1c471b5ead07263fb53dfe09e58bc812ac3673dca02f1d3c2e2a97faef6bc13b&",
+      "https://cdn.discordapp.com/attachments/1551956541219934299/1552285277236494346/Hatsune_Miku.mp4?ex=6ab65f52&is=6ab50dd2&hm=95e498ff449ac2b3ec401c8ddfe70299242a34d804cdf301849f55ec12e48dee&",
     posterUrl: "/thumbnails/hatsune-miku.jpg",
     active: true,
     createdAt: 100,
@@ -25,7 +25,7 @@ const DEFAULT_BACKGROUND_METADATA: BackgroundMetadata[] = [
     id: "bg-anime-scenery",
     name: "Anime Scenery",
     videoUrl:
-      "https://cdn.discordapp.com/attachments/1551956541219934299/1552284766454161438/videoplayback.webm?ex=6ab50d58&is=6ab3bbd8&hm=60bbd1fce52ef8ecb15c7b3979d0219f91900665c759f0f5637a7965520d6542&",
+      "https://cdn.discordapp.com/attachments/1551956541219934299/1552284766454161438/videoplayback.webm?ex=6ab65ed8&is=6ab50d58&hm=ecc5f9c3f59692f35d4ae2340ec24b1cdbf533c67745633fdc21619551c34b82&",
     posterUrl: "/thumbnails/videoplayback.jpg",
     active: true,
     createdAt: 99,
@@ -35,7 +35,7 @@ const DEFAULT_BACKGROUND_METADATA: BackgroundMetadata[] = [
     id: "bg-cosmic-horizon",
     name: "Cosmic Horizon",
     videoUrl:
-      "https://cdn.discordapp.com/attachments/1551956541219934299/1552285275156381756/videoplayback_1.webm?ex=6ab50dd1&is=6ab3bc51&hm=9d84322ac8393c62f7bde65f19433cbddabe193d7c1e51263bc0df41245c3df7&",
+      "https://cdn.discordapp.com/attachments/1551956541219934299/1552285275156381756/videoplayback_1.webm?ex=6ab65f51&is=6ab50dd1&hm=e141e0da935009b1fd0ad6560a4b93736b9950e09de63f064688d18b79c8bfbc&",
     posterUrl: "/thumbnails/videoplayback-1.jpg",
     active: true,
     createdAt: 98,
@@ -45,7 +45,7 @@ const DEFAULT_BACKGROUND_METADATA: BackgroundMetadata[] = [
     id: "bg-the-batman",
     name: "The Batman",
     videoUrl:
-      "https://cdn.discordapp.com/attachments/1551956541219934299/1552285323973885982/im-vengeance-the-batman-moewalls-com.mp4?ex=6ab50ddd&is=6ab3bc5d&hm=72ed5641af129f70952b5c74d6267ad9642ffed60dc996a7dcaaeab2b1b791a8&",
+      "https://cdn.discordapp.com/attachments/1551956541219934299/1552285323973885982/im-vengeance-the-batman-moewalls-com.mp4?ex=6ab65f5d&is=6ab50ddd&hm=57ae76f1e4e11940dd6fd57a9fe32c20d544ae4afc26cc9d03ae14fb1960414a&",
     posterUrl: "/thumbnails/batman.jpg",
     active: true,
     createdAt: 97,
@@ -55,7 +55,7 @@ const DEFAULT_BACKGROUND_METADATA: BackgroundMetadata[] = [
     id: "bg-nekomata-okayu",
     name: "Nekomata Okayu",
     videoUrl:
-      "https://cdn.discordapp.com/attachments/1551956541219934299/1552285237747130409/hololive-nekomata-okayu-live-wallpaper.mp4?ex=6ab50dc8&is=6ab3bc48&hm=ceabdea57f0dee634a8a787e07125a52ab814b41e28c47eab2a9d63caf976d1c&",
+      "https://cdn.discordapp.com/attachments/1551956541219934299/1552285237747130409/hololive-nekomata-okayu-live-wallpaper.mp4?ex=6ab65f48&is=6ab50dc8&hm=ddfd87e2920a6dded29f1c2be21d8c0e935dfd416163597d4a0f30e48e246e70&",
     posterUrl: "/thumbnails/hololive.jpg",
     active: true,
     createdAt: 96,
@@ -65,7 +65,7 @@ const DEFAULT_BACKGROUND_METADATA: BackgroundMetadata[] = [
     id: "bg-summer-pool",
     name: "Summer Pool",
     videoUrl:
-      "https://cdn.discordapp.com/attachments/1551956541219934299/1552285272492744764/pool.mp4?ex=6ab50dd1&is=6ab3bc51&hm=7d64cd29a6277b5bd02ab3142e609d829ab7bf1987c5cee8dc7a1ac92128def9&",
+      "https://cdn.discordapp.com/attachments/1551956541219934299/1552285272492744764/pool.mp4?ex=6ab65f51&is=6ab50dd1&hm=d376cde7df4a93f3405fc3caa92187d230db52ac334d55d14fc927596412b080&",
     posterUrl: "/thumbnails/pool.jpg",
     active: true,
     createdAt: 95,
@@ -75,7 +75,7 @@ const DEFAULT_BACKGROUND_METADATA: BackgroundMetadata[] = [
     id: "bg-earthy-forest",
     name: "Earthy Forest",
     videoUrl:
-      "https://cdn.discordapp.com/attachments/1551956541219934299/1552391578738499644/From_Klickpin.com-_Earthy_forest_walks_for_busy_days_that_feel_fresh_and_shareable_that_feel_deeply_relaxing-pin-id-46865652369505998.mp4?ex=6ab570d2&is=6ab41f52&hm=2285163a0e91a390e52c57c3d6081dca4cfe676d70595786b0219c0ea9f0edc1&",
+      "https://cdn.discordapp.com/attachments/1551956541219934299/1552391578738499644/From_Klickpin.com-_Earthy_forest_walks_for_busy_days_that_feel_fresh_and_shareable_that_feel_deeply_relaxing-pin-id-46865652369505998.mp4?ex=6ab6c252&is=6ab570d2&hm=3ec4f69ed00cf76745cc98e778f2e3e977f8504ddc912bf1342d0c7fc9f0fcd4&",
     posterUrl: "/thumbnails/earthy-forest.jpg",
     active: true,
     createdAt: 94,
@@ -85,7 +85,7 @@ const DEFAULT_BACKGROUND_METADATA: BackgroundMetadata[] = [
     id: "bg-modern-aesthetic",
     name: "Modern Aesthetic",
     videoUrl:
-      "https://cdn.discordapp.com/attachments/1551956541219934299/1552391581565321256/From_Klickpin.com-_Modern_Passive_Income_Ideas_You_Need_Right_Now-pin-id-1088674909925691140.mp4?ex=6ab570d3&is=6ab41f53&hm=7c392e04bbbb48c9e3fd7dc8c45b4d29153d2c3e12890b66106a90126b760386&",
+      "https://cdn.discordapp.com/attachments/1551956541219934299/1552391581565321256/From_Klickpin.com-_Modern_Passive_Income_Ideas_You_Need_Right_Now-pin-id-1088674909925691140.mp4?ex=6ab6c253&is=6ab570d3&hm=235da8389210855c207347657a5a86c7490ddae2507c30ab1aebb0898012a31f&",
     posterUrl: "/thumbnails/modern-aesthetic.jpg",
     active: true,
     createdAt: 93,
@@ -95,7 +95,7 @@ const DEFAULT_BACKGROUND_METADATA: BackgroundMetadata[] = [
     id: "bg-quiet-leafy-home",
     name: "Quiet Leafy Home",
     videoUrl:
-      "https://cdn.discordapp.com/attachments/1551956541219934299/1552391581980696636/From_Klickpin.com-_Quiet_leafy_home_mood_boards_with_charm_and_ideas_with_soft_aesthetic_charm_that_bring_outdoor_joy-pin-id-970103575991145981.mp4?ex=6ab570d3&is=6ab41f53&hm=c357bb052772a33cd7eae39481632d85b60a4bf59089dc973e5e3cb7a2fd5841&",
+      "https://cdn.discordapp.com/attachments/1551956541219934299/1552391581980696636/From_Klickpin.com-_Quiet_leafy_home_mood_boards_with_charm_and_ideas_with_soft_aesthetic_charm_that_bring_outdoor_joy-pin-id-970103575991145981.mp4?ex=6ab6c253&is=6ab570d3&hm=0d21012b8fbcef9d653c0ff36182b0deb7566e99c0ea7c8c7f5ea6aee3751d45&",
     posterUrl: "/thumbnails/quiet-leafy-home.jpg",
     active: true,
     createdAt: 92,

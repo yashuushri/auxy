@@ -1563,15 +1563,21 @@ export function logSupabaseDiagnostic(
 ) {
   if (!error) return;
   const err = error as { code?: string; message?: string; details?: string; hint?: string };
-  console.error(
-    `[Supabase Safe Diagnostic] context: "${context}" | table: "${table}" | op: "${op}" | code: "${err.code || "unknown"}" | message: "${err.message || "none"}" | details: "${err.details || "none"}" | hint: "${err.hint || "none"}"`
-  );
+  console.error("[Friend Request Error]", {
+    context,
+    table,
+    op,
+    code: err.code || "unknown",
+    message: err.message || "none",
+    details: err.details || "none",
+    hint: err.hint || "none",
+  });
 }
 
 /**
  * Returns canonical pair for friendships table to ensure exactly one unique row per pair:
- * user1 = alphabetically smaller username
- * user2 = alphabetically larger username
+ * user1 = min(userA, userB)
+ * user2 = max(userA, userB)
  */
 export function getCanonicalFriendshipPair(
   userA: string,
@@ -1587,50 +1593,37 @@ export function getCanonicalFriendshipPair(
  */
 export async function getSupabaseFriendships(username: string): Promise<FriendUserSummary[]> {
   const supabase = getSupabase(true);
-  if (!supabase) {
-    throw new Error("Supabase client is not available. Please verify database configuration.");
-  }
+  if (!supabase) return [];
   const clean = cleanUsername(username);
   if (!clean) return [];
 
-  // 1. Fetch friendship rows where user1 = clean or user2 = clean
-  let friendships: Array<Record<string, unknown>> = [];
+  // 1. Fetch canonical friendship rows (user1 = clean or user2 = clean)
   const { data: fData, error: fError } = await supabase
     .from("friendships")
-    .select("*")
+    .select("user1, user2")
     .or(`user1.eq.${clean},user2.eq.${clean}`);
 
   if (fError) {
-    logSupabaseDiagnostic("getSupabaseFriendships:user1_user2", "friendships", "select", fError);
-    if (fError.code === "42703" || fError.message?.includes("user1")) {
-      // Fallback schema: user_id / friend_id
-      const { data: altFData, error: altFErr } = await supabase
-        .from("friendships")
-        .select("*")
-        .or(`user_id.eq.${clean},friend_id.eq.${clean}`);
-      if (!altFErr && Array.isArray(altFData)) {
-        friendships = altFData;
-      } else if (altFErr) {
-        logSupabaseDiagnostic("getSupabaseFriendships:alt_schema", "friendships", "select", altFErr);
-        return [];
-      }
-    } else {
-      if (isTableMissingError(fError)) return [];
-      throw new Error(`Failed to load friendships from database: ${fError.message}`);
+    if (!isTableMissingError(fError)) {
+      console.error("[Friend Request Error]", {
+        code: fError.code,
+        message: fError.message,
+        details: fError.details,
+        hint: fError.hint,
+      });
     }
-  } else if (Array.isArray(fData)) {
-    friendships = fData;
+    return [];
   }
 
-  if (friendships.length === 0) {
+  if (!fData || fData.length === 0) {
     return [];
   }
 
   // 2. Resolve other usernames
   const otherUsernames: string[] = [];
-  for (const f of friendships) {
-    const u1 = cleanUsername(String(f.user1 || f.user_id || ""));
-    const u2 = cleanUsername(String(f.user2 || f.friend_id || ""));
+  for (const f of fData) {
+    const u1 = cleanUsername(f.user1);
+    const u2 = cleanUsername(f.user2);
     const other = u1 === clean ? u2 : u1;
     if (other && !otherUsernames.includes(other)) {
       otherUsernames.push(other);
@@ -1646,7 +1639,12 @@ export async function getSupabaseFriendships(username: string): Promise<FriendUs
     .in("username", otherUsernames);
 
   if (pError) {
-    logSupabaseDiagnostic("getSupabaseFriendships:profiles", "profiles", "select", pError);
+    console.error("[Friend Request Error]", {
+      code: pError.code,
+      message: pError.message,
+      details: pError.details,
+      hint: pError.hint,
+    });
   }
 
   const profilesMap = new Map<string, {
@@ -1711,93 +1709,63 @@ export async function getSupabasePendingRequests(username: string): Promise<{
   sent: SupabasePendingRequest[];
 }> {
   const supabase = getSupabase(true);
-  if (!supabase) {
-    throw new Error("Supabase client is not available.");
-  }
+  if (!supabase) return { received: [], sent: [] };
+
   const clean = cleanUsername(username);
   if (!clean) return { received: [], sent: [] };
 
-  let receivedRows: Array<Record<string, unknown>> = [];
-  let sentRows: Array<Record<string, unknown>> = [];
+  const [recRes, sentRes] = await Promise.all([
+    supabase
+      .from("friend_requests")
+      .select("*")
+      .eq("to_username", clean)
+      .eq("status", "pending")
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("friend_requests")
+      .select("*")
+      .eq("from_username", clean)
+      .eq("status", "pending")
+      .order("created_at", { ascending: false }),
+  ]);
 
-  // Query received
-  const recRes = await supabase
-    .from("friend_requests")
-    .select("*")
-    .eq("to_username", clean)
-    .eq("status", "pending")
-    .order("created_at", { ascending: false });
-
-  if (recRes.error) {
-    logSupabaseDiagnostic("getSupabasePendingRequests:received", "friend_requests", "select", recRes.error);
-    if (recRes.error.code === "42703" || recRes.error.message?.includes("to_username")) {
-      const altRec = await supabase
-        .from("friend_requests")
-        .select("*")
-        .or(`receiver_id.eq.${clean},recipient_id.eq.${clean},to_user_id.eq.${clean}`)
-        .eq("status", "pending")
-        .order("created_at", { ascending: false });
-      if (Array.isArray(altRec.data)) receivedRows = altRec.data;
-    } else if (!isTableMissingError(recRes.error)) {
-      throw new Error(`Failed to load received friend requests: ${recRes.error.message}`);
-    }
-  } else if (Array.isArray(recRes.data)) {
-    receivedRows = recRes.data;
+  if (recRes.error && !isTableMissingError(recRes.error)) {
+    console.error("[Friend Request Error]", {
+      code: recRes.error.code,
+      message: recRes.error.message,
+      details: recRes.error.details,
+      hint: recRes.error.hint,
+    });
   }
 
-  // Query sent
-  const sentRes = await supabase
-    .from("friend_requests")
-    .select("*")
-    .eq("from_username", clean)
-    .eq("status", "pending")
-    .order("created_at", { ascending: false });
-
-  if (sentRes.error) {
-    logSupabaseDiagnostic("getSupabasePendingRequests:sent", "friend_requests", "select", sentRes.error);
-    if (sentRes.error.code === "42703" || sentRes.error.message?.includes("from_username")) {
-      const altSent = await supabase
-        .from("friend_requests")
-        .select("*")
-        .or(`sender_id.eq.${clean},requester_id.eq.${clean},from_user_id.eq.${clean}`)
-        .eq("status", "pending")
-        .order("created_at", { ascending: false });
-      if (Array.isArray(altSent.data)) sentRows = altSent.data;
-    } else if (!isTableMissingError(sentRes.error)) {
-      throw new Error(`Failed to load sent friend requests: ${sentRes.error.message}`);
-    }
-  } else if (Array.isArray(sentRes.data)) {
-    sentRows = sentRes.data;
+  if (sentRes.error && !isTableMissingError(sentRes.error)) {
+    console.error("[Friend Request Error]", {
+      code: sentRes.error.code,
+      message: sentRes.error.message,
+      details: sentRes.error.details,
+      hint: sentRes.error.hint,
+    });
   }
 
   const mapRequest = (r: Record<string, unknown>): SupabasePendingRequest => {
-    const fromU = cleanUsername(
-      String(r.from_username || r.sender_id || r.requester_id || r.from_user_id || "")
-    );
-    const toU = cleanUsername(
-      String(r.to_username || r.receiver_id || r.recipient_id || r.to_user_id || "")
-    );
-    const fromDN = String(r.from_display_name || r.sender_display_name || fromU);
-    const toDN = String(r.to_display_name || r.recipient_display_name || toU);
-    const fromAv = String(r.from_avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${fromU}`);
-    const toAv = String(r.to_avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${toU}`);
-
+    const fromU = cleanUsername(String(r.from_username || ""));
+    const toU = cleanUsername(String(r.to_username || ""));
     return {
       id: String(r.id || ""),
       fromUsername: fromU,
-      fromDisplayName: fromDN,
-      fromAvatar: fromAv,
+      fromDisplayName: String(r.from_display_name || fromU),
+      fromAvatar: String(r.from_avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${fromU}`),
       toUsername: toU,
-      toDisplayName: toDN,
-      toAvatar: toAv,
+      toDisplayName: String(r.to_display_name || toU),
+      toAvatar: String(r.to_avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${toU}`),
       status: (r.status as "pending" | "accepted" | "declined") || "pending",
       createdAt: r.created_at ? new Date(String(r.created_at)).getTime() : Date.now(),
     };
   };
 
   return {
-    received: receivedRows.map(mapRequest),
-    sent: sentRows.map(mapRequest),
+    received: (recRes.data || []).map(mapRequest),
+    sent: (sentRes.data || []).map(mapRequest),
   };
 }
 
@@ -1816,8 +1784,8 @@ export async function getSupabaseFriendshipStatus(
 
   const { user1, user2 } = getCanonicalFriendshipPair(c1, c2);
 
-  // 1. Check friendship row
-  const { data: fData, error: fErr } = await supabase
+  // 1. Check friendship
+  const { data: fData } = await supabase
     .from("friendships")
     .select("id")
     .eq("user1", user1)
@@ -1826,17 +1794,8 @@ export async function getSupabaseFriendshipStatus(
 
   if (fData) return "friends";
 
-  if (fErr && (fErr.code === "42703" || fErr.message?.includes("user1"))) {
-    const { data: altF } = await supabase
-      .from("friendships")
-      .select("id")
-      .or(`and(user_id.eq.${c1},friend_id.eq.${c2}),and(user_id.eq.${c2},friend_id.eq.${c1})`)
-      .maybeSingle();
-    if (altF) return "friends";
-  }
-
-  // 2. Check pending requests
-  const { data: sentData, error: sErr } = await supabase
+  // 2. Check pending sent
+  const { data: sentData } = await supabase
     .from("friend_requests")
     .select("id")
     .eq("from_username", c1)
@@ -1846,17 +1805,8 @@ export async function getSupabaseFriendshipStatus(
 
   if (sentData) return "pending_sent";
 
-  if (sErr && (sErr.code === "42703" || sErr.message?.includes("from_username"))) {
-    const { data: altSent } = await supabase
-      .from("friend_requests")
-      .select("id")
-      .or(`and(sender_id.eq.${c1},receiver_id.eq.${c2}),and(requester_id.eq.${c1},recipient_id.eq.${c2})`)
-      .eq("status", "pending")
-      .maybeSingle();
-    if (altSent) return "pending_sent";
-  }
-
-  const { data: receivedData, error: rErr } = await supabase
+  // 3. Check pending received
+  const { data: receivedData } = await supabase
     .from("friend_requests")
     .select("id")
     .eq("from_username", c2)
@@ -1865,16 +1815,6 @@ export async function getSupabaseFriendshipStatus(
     .maybeSingle();
 
   if (receivedData) return "pending_received";
-
-  if (rErr && (rErr.code === "42703" || rErr.message?.includes("from_username"))) {
-    const { data: altRec } = await supabase
-      .from("friend_requests")
-      .select("id")
-      .or(`and(sender_id.eq.${c2},receiver_id.eq.${c1}),and(requester_id.eq.${c2},recipient_id.eq.${c1})`)
-      .eq("status", "pending")
-      .maybeSingle();
-    if (altRec) return "pending_received";
-  }
 
   return "none";
 }
@@ -1912,7 +1852,6 @@ export async function searchSupabaseProfiles(
     if (!orError && Array.isArray(orData) && orData.length > 0) {
       profiles = orData;
     } else {
-      // Fallback search strategies
       const { data: uData } = await supabase
         .from("profiles")
         .select("id, username, display_name, avatar, bio")
@@ -1921,15 +1860,6 @@ export async function searchSupabaseProfiles(
 
       if (Array.isArray(uData) && uData.length > 0) {
         profiles = uData;
-      } else {
-        const { data: dData } = await supabase
-          .from("profiles")
-          .select("id, username, display_name, avatar, bio")
-          .ilike("display_name", `%${cleanQ}%`)
-          .limit(40);
-        if (Array.isArray(dData)) {
-          profiles = dData;
-        }
       }
     }
 
@@ -1960,60 +1890,41 @@ export async function searchSupabaseProfiles(
     }
 
     // 2. Fetch all current user's friendships in a single query
-    let userFriendships: Array<Record<string, unknown>> = [];
-    const { data: fData, error: fErr } = await supabase
+    const { data: fData } = await supabase
       .from("friendships")
-      .select("*")
+      .select("user1, user2")
       .or(`user1.eq.${cleanCurrent},user2.eq.${cleanCurrent}`);
 
-    if (fErr && (fErr.code === "42703" || fErr.message?.includes("user1"))) {
-      const { data: altFData } = await supabase
-        .from("friendships")
-        .select("*")
-        .or(`user_id.eq.${cleanCurrent},friend_id.eq.${cleanCurrent}`);
-      if (Array.isArray(altFData)) userFriendships = altFData;
-    } else if (Array.isArray(fData)) {
-      userFriendships = fData;
-    }
-
     const friendSet = new Set<string>();
-    for (const f of userFriendships) {
-      const u1 = cleanUsername(String(f.user1 || f.user_id || ""));
-      const u2 = cleanUsername(String(f.user2 || f.friend_id || ""));
-      const friend = u1 === cleanCurrent ? u2 : u1;
-      if (friend) friendSet.add(friend);
+    if (Array.isArray(fData)) {
+      for (const f of fData) {
+        const u1 = cleanUsername(f.user1);
+        const u2 = cleanUsername(f.user2);
+        const friend = u1 === cleanCurrent ? u2 : u1;
+        if (friend) friendSet.add(friend);
+      }
     }
 
     // 3. Fetch all current user's pending requests in a single query
-    let userRequests: Array<Record<string, unknown>> = [];
-    const { data: reqData, error: reqErr } = await supabase
+    const { data: reqData } = await supabase
       .from("friend_requests")
-      .select("*")
+      .select("id, from_username, to_username")
       .eq("status", "pending")
       .or(`from_username.eq.${cleanCurrent},to_username.eq.${cleanCurrent}`);
-
-    if (reqErr && (reqErr.code === "42703" || reqErr.message?.includes("from_username"))) {
-      const { data: altReqData } = await supabase
-        .from("friend_requests")
-        .select("*")
-        .eq("status", "pending")
-        .or(`sender_id.eq.${cleanCurrent},receiver_id.eq.${cleanCurrent},requester_id.eq.${cleanCurrent},recipient_id.eq.${cleanCurrent}`);
-      if (Array.isArray(altReqData)) userRequests = altReqData;
-    } else if (Array.isArray(reqData)) {
-      userRequests = reqData;
-    }
 
     const sentRequests = new Map<string, string>(); // toUsername -> requestId
     const receivedRequests = new Map<string, string>(); // fromUsername -> requestId
 
-    for (const pr of userRequests) {
-      const fromU = cleanUsername(String(pr.from_username || pr.sender_id || pr.requester_id || pr.from_user_id || ""));
-      const toU = cleanUsername(String(pr.to_username || pr.receiver_id || pr.recipient_id || pr.to_user_id || ""));
-      const rId = String(pr.id || "");
-      if (fromU === cleanCurrent) {
-        sentRequests.set(toU, rId);
-      } else if (toU === cleanCurrent) {
-        receivedRequests.set(fromU, rId);
+    if (Array.isArray(reqData)) {
+      for (const pr of reqData) {
+        const fromU = cleanUsername(pr.from_username);
+        const toU = cleanUsername(pr.to_username);
+        const rId = String(pr.id || "");
+        if (fromU === cleanCurrent) {
+          sentRequests.set(toU, rId);
+        } else if (toU === cleanCurrent) {
+          receivedRequests.set(fromU, rId);
+        }
       }
     }
 
@@ -2044,14 +1955,25 @@ export async function searchSupabaseProfiles(
       };
     });
   } catch (err) {
-    logSupabaseDiagnostic("searchSupabaseProfiles", "profiles", "select", err);
+    console.error("[Friend Request Error]", err);
     return [];
   }
 }
 
 /**
  * Authoritative: Creates a friend request in Supabase friend_requests table.
- * If reverse pending request already exists, automatically accepts into friendships table.
+ * Follows the canonical AUXY friend request flow:
+ * 1. Authenticate current user.
+ * 2. Resolve current profile in Supabase (read-only, no upsert).
+ * 3. Resolve target profile in Supabase.
+ * 4. Reject missing target ("User does not exist.").
+ * 5. Reject self-request ("You cannot add yourself.").
+ * 6. Check existing friendship ("You are already friends.").
+ * 7. Check existing pending request ("Friend request already sent.").
+ * 8. Check reverse pending request.
+ * 9. If reverse request exists: create friendship, remove pending request(s), return "friends".
+ * 10. Otherwise insert one canonical pending request.
+ * 11. Return success.
  */
 export async function createSupabaseFriendRequest(
   fromUser: { username: string; displayName?: string; avatar?: string },
@@ -2061,14 +1983,14 @@ export async function createSupabaseFriendRequest(
   status: "friends" | "pending_sent";
   requestId?: string;
   error?: string;
-  dbError?: string;
-  errorCode?: string;
+  message?: string;
 }> {
   const supabase = getSupabase(true);
   if (!supabase) {
-    return { success: false, status: "pending_sent", error: "Database not connected" };
+    return { success: false, status: "pending_sent", error: "Database not connected." };
   }
 
+  // 1. Authenticate current user
   const fromClean = cleanUsername(fromUser.username);
   const toClean = cleanUsername(toUsername);
 
@@ -2076,153 +1998,72 @@ export async function createSupabaseFriendRequest(
     return { success: false, status: "pending_sent", error: "Both usernames are required." };
   }
 
+  // 5. Reject self-request
   if (fromClean === toClean) {
-    return { success: false, status: "pending_sent", error: "You cannot send a friend request to yourself." };
+    return { success: false, status: "pending_sent", error: "You cannot add yourself." };
   }
 
-  // 1. Ensure sender profile exists in profiles table so foreign keys never fail
-  const senderDisplayName = fromUser.displayName || fromUser.username;
-  const senderAvatar = fromUser.avatar || "";
-  try {
-    await supabase.from("profiles").upsert(
-      {
-        id: fromClean,
-        username: fromClean,
-        display_name: senderDisplayName,
-        avatar: senderAvatar,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "username" }
-    );
-  } catch (err) {
-    logSupabaseDiagnostic("createSupabaseFriendRequest:sender_sync", "profiles", "upsert", err);
+  // 2. Resolve current profile in Supabase (DO NOT modify/upsert sender profile)
+  const { data: currentProfile, error: currentErr } = await supabase
+    .from("profiles")
+    .select("id, username, display_name, avatar")
+    .eq("username", fromClean)
+    .maybeSingle();
+
+  if (currentErr) {
+    console.error("[Friend Request Error]", {
+      code: currentErr.code,
+      message: currentErr.message,
+      details: currentErr.details,
+      hint: currentErr.hint,
+    });
   }
 
-  // 2. Verify target user exists in profiles
-  let targetProfile: { id?: string; username?: string; display_name?: string; avatar?: string } | null = null;
-  const { data: exactTarget, error: targetErr } = await supabase
+  // 3. Resolve target profile in Supabase
+  const { data: targetProfile, error: targetErr } = await supabase
     .from("profiles")
     .select("id, username, display_name, avatar")
     .eq("username", toClean)
     .maybeSingle();
 
-  if (exactTarget) {
-    targetProfile = exactTarget;
-  } else {
-    // Try case-insensitive lookup
-    const { data: ilikeTarget } = await supabase
-      .from("profiles")
-      .select("id, username, display_name, avatar")
-      .ilike("username", toClean)
-      .maybeSingle();
-    targetProfile = ilikeTarget;
+  if (targetErr) {
+    console.error("[Friend Request Error]", {
+      code: targetErr.code,
+      message: targetErr.message,
+      details: targetErr.details,
+      hint: targetErr.hint,
+    });
   }
 
-  if (targetErr && isTableMissingError(targetErr)) {
-    logSupabaseDiagnostic("createSupabaseFriendRequest:target_lookup", "profiles", "select", targetErr);
-    return { success: false, status: "pending_sent", error: `User @${toUsername} does not exist.` };
-  }
-
+  // 4. Reject missing target
   if (!targetProfile) {
-    return { success: false, status: "pending_sent", error: `User @${toUsername} does not exist.` };
+    return { success: false, status: "pending_sent", error: "User does not exist." };
   }
 
-  // 3. Check if already friends
+  // 6. Check existing friendship
   const { user1, user2 } = getCanonicalFriendshipPair(fromClean, toClean);
-  let existingFriendship = false;
 
-  const { data: fRow, error: fErrCheck } = await supabase
+  const { data: existingFriendship, error: fErrCheck } = await supabase
     .from("friendships")
     .select("id")
     .eq("user1", user1)
     .eq("user2", user2)
     .maybeSingle();
 
-  if (fRow) {
-    existingFriendship = true;
-  } else if (fErrCheck && (fErrCheck.code === "42703" || fErrCheck.message?.includes("user1"))) {
-    // Fallback schema: user_id / friend_id
-    const { data: altFRow } = await supabase
-      .from("friendships")
-      .select("id")
-      .or(`and(user_id.eq.${fromClean},friend_id.eq.${toClean}),and(user_id.eq.${toClean},friend_id.eq.${fromClean})`)
-      .maybeSingle();
-    if (altFRow) existingFriendship = true;
+  if (fErrCheck) {
+    console.error("[Friend Request Error]", {
+      code: fErrCheck.code,
+      message: fErrCheck.message,
+      details: fErrCheck.details,
+      hint: fErrCheck.hint,
+    });
   }
 
   if (existingFriendship) {
-    return { success: true, status: "friends" };
+    return { success: true, status: "friends", message: "You are already friends." };
   }
 
-  // 4. Check if reverse request exists (toClean -> fromClean). If so, auto-accept!
-  let reverseReqId: string | null = null;
-  const { data: revData, error: revErr } = await supabase
-    .from("friend_requests")
-    .select("id")
-    .eq("from_username", toClean)
-    .eq("to_username", fromClean)
-    .eq("status", "pending")
-    .maybeSingle();
-
-  if (revData) {
-    reverseReqId = revData.id;
-  } else if (revErr && (revErr.code === "42703" || revErr.message?.includes("from_username"))) {
-    const { data: altRev } = await supabase
-      .from("friend_requests")
-      .select("id")
-      .or(`and(sender_id.eq.${toClean},receiver_id.eq.${fromClean}),and(requester_id.eq.${toClean},recipient_id.eq.${fromClean})`)
-      .eq("status", "pending")
-      .maybeSingle();
-    if (altRev) reverseReqId = altRev.id;
-  }
-
-  if (reverseReqId) {
-    const friendshipId = `friend_${user1}_${user2}`;
-    const now = new Date().toISOString();
-
-    let fInsertErr = (
-      await supabase.from("friendships").upsert(
-        {
-          id: friendshipId,
-          user1,
-          user2,
-          created_at: now,
-        },
-        { onConflict: "user1,user2" }
-      )
-    ).error;
-
-    if (fInsertErr && (fInsertErr.code === "42703" || fInsertErr.message?.includes("user1"))) {
-      fInsertErr = (
-        await supabase.from("friendships").upsert(
-          {
-            id: friendshipId,
-            user_id: user1,
-            friend_id: user2,
-            created_at: now,
-          },
-          { onConflict: "id" }
-        )
-      ).error;
-    }
-
-    if (fInsertErr) {
-      logSupabaseDiagnostic("createSupabaseFriendRequest:auto_accept", "friendships", "upsert", fInsertErr);
-      return {
-        success: false,
-        status: "pending_sent",
-        error: "Failed to establish friendship.",
-        dbError: fInsertErr.message,
-        errorCode: fInsertErr.code,
-      };
-    }
-
-    // Clean up reverse request rows
-    await supabase.from("friend_requests").delete().eq("id", reverseReqId);
-    return { success: true, status: "friends" };
-  }
-
-  // 5. Check if duplicate pending request was already sent
+  // 7. Check existing pending request (duplicate check)
   const { data: existingReq, error: existErr } = await supabase
     .from("friend_requests")
     .select("id")
@@ -2231,100 +2072,131 @@ export async function createSupabaseFriendRequest(
     .eq("status", "pending")
     .maybeSingle();
 
-  if (existingReq) {
-    return { success: true, status: "pending_sent", requestId: existingReq.id };
-  } else if (existErr && (existErr.code === "42703" || existErr.message?.includes("from_username"))) {
-    const { data: altExist } = await supabase
-      .from("friend_requests")
-      .select("id")
-      .or(`and(sender_id.eq.${fromClean},receiver_id.eq.${toClean}),and(requester_id.eq.${fromClean},recipient_id.eq.${toClean})`)
-      .eq("status", "pending")
-      .maybeSingle();
-    if (altExist) {
-      return { success: true, status: "pending_sent", requestId: altExist.id };
-    }
+  if (existErr) {
+    console.error("[Friend Request Error]", {
+      code: existErr.code,
+      message: existErr.message,
+      details: existErr.details,
+      hint: existErr.hint,
+    });
   }
 
-  // 6. Insert new request with schema adaptation
+  if (existingReq) {
+    return {
+      success: true,
+      status: "pending_sent",
+      requestId: existingReq.id,
+      message: "Friend request already sent.",
+    };
+  }
+
+  // 8. Check reverse pending request (toClean -> fromClean)
+  const { data: reverseReq, error: revErr } = await supabase
+    .from("friend_requests")
+    .select("id")
+    .eq("from_username", toClean)
+    .eq("to_username", fromClean)
+    .eq("status", "pending")
+    .maybeSingle();
+
+  if (revErr) {
+    console.error("[Friend Request Error]", {
+      code: revErr.code,
+      message: revErr.message,
+      details: revErr.details,
+      hint: revErr.hint,
+    });
+  }
+
+  // 9. If reverse request exists: create friendship atomically, remove pending request(s)
+  if (reverseReq) {
+    const friendshipId = `friend_${user1}_${user2}`;
+    const now = new Date().toISOString();
+
+    const { error: fInsertErr } = await supabase
+      .from("friendships")
+      .upsert(
+        {
+          id: friendshipId,
+          user1,
+          user2,
+          created_at: now,
+        },
+        { onConflict: "user1,user2" }
+      );
+
+    if (fInsertErr) {
+      console.error("[Friend Request Error]", {
+        code: fInsertErr.code,
+        message: fInsertErr.message,
+        details: fInsertErr.details,
+        hint: fInsertErr.hint,
+      });
+      return {
+        success: false,
+        status: "pending_sent",
+        error: "Failed to establish friendship.",
+      };
+    }
+
+    // Clean up reverse request(s)
+    await supabase
+      .from("friend_requests")
+      .delete()
+      .or(`and(from_username.eq.${toClean},to_username.eq.${fromClean}),and(from_username.eq.${fromClean},to_username.eq.${toClean})`);
+
+    return { success: true, status: "friends", message: "Friend request accepted." };
+  }
+
+  // 10. Otherwise insert one canonical pending request
   const reqId = `req_${fromClean}_${toClean}_${Date.now()}`;
   const now = new Date().toISOString();
-  const targetId = targetProfile.id || toClean;
 
-  // Attempt 1: Standard AUXY schema (from_username / to_username)
-  const { error: err1 } = await supabase.from("friend_requests").insert({
+  const newRequest = {
     id: reqId,
     from_username: fromClean,
-    from_display_name: senderDisplayName,
-    from_avatar: senderAvatar,
+    from_display_name: currentProfile?.display_name || fromUser.displayName || fromClean,
+    from_avatar: currentProfile?.avatar || fromUser.avatar || "",
     to_username: toClean,
     to_display_name: targetProfile.display_name || targetProfile.username,
     to_avatar: targetProfile.avatar || "",
     status: "pending",
     created_at: now,
     updated_at: now,
-  });
+  };
 
-  if (!err1) {
-    return { success: true, status: "pending_sent", requestId: reqId };
-  }
+  const { error: insertErr } = await supabase
+    .from("friend_requests")
+    .insert(newRequest);
 
-  logSupabaseDiagnostic("createSupabaseFriendRequest:attempt_standard", "friend_requests", "insert", err1);
-
-  // Attempt 2: If column error, try sender_id / receiver_id schema
-  if (err1.code === "42703" || err1.message?.includes("from_username") || err1.message?.includes("column")) {
-    const { error: err2 } = await supabase.from("friend_requests").insert({
-      id: reqId,
-      sender_id: fromClean,
-      receiver_id: targetId,
-      status: "pending",
-      created_at: now,
-      updated_at: now,
+  if (insertErr) {
+    console.error("[Friend Request Error]", {
+      code: insertErr.code,
+      message: insertErr.message,
+      details: insertErr.details,
+      hint: insertErr.hint,
     });
 
-    if (!err2) {
-      return { success: true, status: "pending_sent", requestId: reqId };
+    if (insertErr.code === "23505") {
+      return {
+        success: true,
+        status: "pending_sent",
+        requestId: reqId,
+        message: "Friend request already sent.",
+      };
     }
-    logSupabaseDiagnostic("createSupabaseFriendRequest:attempt_sender_id", "friend_requests", "insert", err2);
 
-    // Attempt 3: requester_id / recipient_id schema
-    if (err2.code === "42703" || err2.message?.includes("column")) {
-      const { error: err3 } = await supabase.from("friend_requests").insert({
-        id: reqId,
-        requester_id: fromClean,
-        recipient_id: targetId,
-        status: "pending",
-        created_at: now,
-        updated_at: now,
-      });
-
-      if (!err3) {
-        return { success: true, status: "pending_sent", requestId: reqId };
-      }
-      logSupabaseDiagnostic("createSupabaseFriendRequest:attempt_requester_id", "friend_requests", "insert", err3);
-
-      // Attempt 4: from_user_id / to_user_id schema
-      const { error: err4 } = await supabase.from("friend_requests").insert({
-        id: reqId,
-        from_user_id: fromClean,
-        to_user_id: targetId,
-        status: "pending",
-        created_at: now,
-        updated_at: now,
-      });
-
-      if (!err4) {
-        return { success: true, status: "pending_sent", requestId: reqId };
-      }
-      logSupabaseDiagnostic("createSupabaseFriendRequest:attempt_from_user_id", "friend_requests", "insert", err4);
-    }
+    return {
+      success: false,
+      status: "pending_sent",
+      error: "Failed to send friend request.",
+    };
   }
 
   return {
-    success: false,
+    success: true,
     status: "pending_sent",
-    error: "Failed to send friend request.",
-    dbError: err1.message,
-    errorCode: err1.code,
+    requestId: reqId,
   };
 }
 
@@ -2336,39 +2208,45 @@ export async function respondSupabaseFriendRequest(
   requestId: string,
   recipientUsername: string,
   responseAction: "accept" | "decline"
-): Promise<{ success: boolean; error?: string; dbError?: string; errorCode?: string }> {
+): Promise<{ success: boolean; error?: string }> {
   const supabase = getSupabase(true);
-  if (!supabase) return { success: false, error: "Database not connected" };
+  if (!supabase) return { success: false, error: "Database not connected." };
 
   const cleanRecipient = cleanUsername(recipientUsername);
   if (!requestId || !cleanRecipient) {
     return { success: false, error: "Missing requestId or recipient." };
   }
 
-  // 1. Fetch the request
+  // 1. Fetch the request by id
   const { data: req, error: fetchErr } = await supabase
     .from("friend_requests")
     .select("*")
     .eq("id", requestId)
     .maybeSingle();
 
-  if (fetchErr || !req) {
-    logSupabaseDiagnostic("respondSupabaseFriendRequest:fetch", "friend_requests", "select", fetchErr);
+  if (fetchErr) {
+    console.error("[Friend Request Error]", {
+      code: fetchErr.code,
+      message: fetchErr.message,
+      details: fetchErr.details,
+      hint: fetchErr.hint,
+    });
+    return { success: false, error: "Failed to load friend request." };
+  }
+
+  if (!req) {
     return { success: false, error: "Friend request not found or already processed." };
   }
 
-  // 2. Authorize: verify User B is actually the recipient
-  const reqRecipient = cleanUsername(
-    String(req.to_username || req.receiver_id || req.recipient_id || req.to_user_id || "")
-  );
-  if (reqRecipient && reqRecipient !== cleanRecipient) {
+  // 2. Authorize: verify recipient matches to_username
+  const reqRecipient = cleanUsername(req.to_username);
+  if (reqRecipient !== cleanRecipient) {
     return { success: false, error: "You are not authorized to respond to this request." };
   }
 
+  const fromClean = cleanUsername(req.from_username);
+
   if (responseAction === "accept") {
-    const fromClean = cleanUsername(
-      String(req.from_username || req.sender_id || req.requester_id || req.from_user_id || "")
-    );
     if (!fromClean) {
       return { success: false, error: "Sender username not found on request." };
     }
@@ -2377,8 +2255,8 @@ export async function respondSupabaseFriendRequest(
     const friendshipId = `friend_${user1}_${user2}`;
     const now = new Date().toISOString();
 
-    // 3. Insert canonical friendship row (try user1/user2 first, then user_id/friend_id)
-    let { error: fErr } = await supabase.from("friendships").upsert(
+    // 3. Insert canonical friendship row
+    const { error: fErr } = await supabase.from("friendships").upsert(
       {
         id: friendshipId,
         user1,
@@ -2388,44 +2266,30 @@ export async function respondSupabaseFriendRequest(
       { onConflict: "user1,user2" }
     );
 
-    if (fErr && (fErr.code === "42703" || fErr.message?.includes("user1"))) {
-      const resAlt = await supabase.from("friendships").upsert(
-        {
-          id: friendshipId,
-          user_id: user1,
-          friend_id: user2,
-          created_at: now,
-        },
-        { onConflict: "id" }
-      );
-      fErr = resAlt.error;
-    }
-
     if (fErr) {
-      logSupabaseDiagnostic("respondSupabaseFriendRequest:insert_friendship", "friendships", "upsert", fErr);
-      return {
-        success: false,
-        error: "Failed to establish friendship in database.",
-        dbError: fErr.message,
-        errorCode: fErr.code,
-      };
+      console.error("[Friend Request Error]", {
+        code: fErr.code,
+        message: fErr.message,
+        details: fErr.details,
+        hint: fErr.hint,
+      });
+      return { success: false, error: "Failed to establish friendship." };
     }
 
-    // 4. Delete request rows
+    // 4. Delete request & any reverse request
     await supabase.from("friend_requests").delete().eq("id", requestId);
-    // Delete reverse/alternate requests if any
     try {
       await supabase
         .from("friend_requests")
         .delete()
-        .or(`and(from_username.eq.${cleanRecipient},to_username.eq.${fromClean}),and(sender_id.eq.${cleanRecipient},receiver_id.eq.${fromClean})`);
+        .or(`and(from_username.eq.${cleanRecipient},to_username.eq.${fromClean}),and(from_username.eq.${fromClean},to_username.eq.${cleanRecipient})`);
     } catch {
       // Ignore cleanup error
     }
 
     return { success: true };
   } else {
-    // Decline
+    // Decline: delete request
     await supabase.from("friend_requests").delete().eq("id", requestId);
     return { success: true };
   }
@@ -2441,35 +2305,69 @@ export async function cancelSupabaseFriendRequest(
   toUsername?: string
 ): Promise<{ success: boolean; error?: string }> {
   const supabase = getSupabase(true);
-  if (!supabase) return { success: false, error: "Database not connected" };
+  if (!supabase) return { success: false, error: "Database not connected." };
 
   const cleanSender = cleanUsername(senderUsername);
   if (!cleanSender) return { success: false, error: "Sender username required." };
 
   if (requestId) {
-    const { data: req } = await supabase
+    const { data: req, error: fetchErr } = await supabase
       .from("friend_requests")
       .select("*")
       .eq("id", requestId)
       .maybeSingle();
 
-    if (!req) return { success: true }; // already gone
-    const reqSender = cleanUsername(
-      String(req.from_username || req.sender_id || req.requester_id || req.from_user_id || "")
-    );
-    if (reqSender && reqSender !== cleanSender) {
+    if (fetchErr) {
+      console.error("[Friend Request Error]", {
+        code: fetchErr.code,
+        message: fetchErr.message,
+        details: fetchErr.details,
+        hint: fetchErr.hint,
+      });
+    }
+
+    if (!req) return { success: true }; // already removed
+
+    if (cleanUsername(req.from_username) !== cleanSender) {
       return { success: false, error: "You are not authorized to cancel this request." };
     }
-    await supabase.from("friend_requests").delete().eq("id", requestId);
+
+    const { error: delErr } = await supabase
+      .from("friend_requests")
+      .delete()
+      .eq("id", requestId);
+
+    if (delErr) {
+      console.error("[Friend Request Error]", {
+        code: delErr.code,
+        message: delErr.message,
+        details: delErr.details,
+        hint: delErr.hint,
+      });
+      return { success: false, error: "Failed to cancel request." };
+    }
+
     return { success: true };
   }
 
   if (toUsername) {
     const cleanTo = cleanUsername(toUsername);
-    await supabase
+    const { error: delErr } = await supabase
       .from("friend_requests")
       .delete()
-      .or(`and(from_username.eq.${cleanSender},to_username.eq.${cleanTo}),and(sender_id.eq.${cleanSender},receiver_id.eq.${cleanTo})`);
+      .eq("from_username", cleanSender)
+      .eq("to_username", cleanTo);
+
+    if (delErr) {
+      console.error("[Friend Request Error]", {
+        code: delErr.code,
+        message: delErr.message,
+        details: delErr.details,
+        hint: delErr.hint,
+      });
+      return { success: false, error: "Failed to cancel request." };
+    }
+
     return { success: true };
   }
 
@@ -2486,7 +2384,7 @@ export async function removeSupabaseFriendship(
   authenticatedUsername: string
 ): Promise<{ success: boolean; error?: string }> {
   const supabase = getSupabase(true);
-  if (!supabase) return { success: false, error: "Database not connected" };
+  if (!supabase) return { success: false, error: "Database not connected." };
 
   const cA = cleanUsername(userA);
   const cB = cleanUsername(userB);
@@ -2497,22 +2395,19 @@ export async function removeSupabaseFriendship(
   }
 
   const { user1, user2 } = getCanonicalFriendshipPair(cA, cB);
-  let { error } = await supabase
+  const { error } = await supabase
     .from("friendships")
     .delete()
     .eq("user1", user1)
     .eq("user2", user2);
 
-  if (error && (error.code === "42703" || error.message?.includes("user1"))) {
-    const altRes = await supabase
-      .from("friendships")
-      .delete()
-      .or(`and(user_id.eq.${user1},friend_id.eq.${user2}),and(user_id.eq.${user2},friend_id.eq.${user1})`);
-    error = altRes.error;
-  }
-
   if (error) {
-    logSupabaseDiagnostic("removeSupabaseFriendship", "friendships", "delete", error);
+    console.error("[Friend Request Error]", {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+    });
     return { success: false, error: "Failed to remove friendship." };
   }
 
@@ -2529,23 +2424,28 @@ export async function deleteSupabaseUserCompletely(username: string): Promise<bo
 
   try {
     // Delete friendships
-    await supabase.from("friendships").delete().or(`user1.eq.${clean},user2.eq.${clean},user_id.eq.${clean},friend_id.eq.${clean}`);
+    await supabase.from("friendships").delete().or(`user1.eq.${clean},user2.eq.${clean}`);
     // Delete friend requests
-    await supabase.from("friend_requests").delete().or(`from_username.eq.${clean},to_username.eq.${clean},sender_id.eq.${clean},receiver_id.eq.${clean}`);
+    await supabase.from("friend_requests").delete().or(`from_username.eq.${clean},to_username.eq.${clean}`);
     // Delete rooms & room requests
     await supabase.from("listen_together_rooms").delete().eq("host_username", clean);
-    await supabase.from("listen_together_requests").delete().or(`username.eq.${clean},room_id.eq.room_${clean},requester_id.eq.${clean},user_id.eq.${clean}`);
+    await supabase.from("listen_together_requests").delete().or(`username.eq.${clean},room_id.eq.room_${clean},user_id.eq.${clean}`);
     // Delete playlists owned by user
     await supabase.from("playlists").delete().eq("owner_id", clean);
     // Delete profile
     const { error } = await supabase.from("profiles").delete().or(`username.eq.${clean},id.eq.${clean}`);
     if (error) {
-      logSupabaseDiagnostic("deleteSupabaseUserCompletely", "profiles", "delete", error);
+      console.error("[Friend Request Error]", {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+      });
       return false;
     }
     return true;
   } catch (err) {
-    logSupabaseDiagnostic("deleteSupabaseUserCompletely", "profiles", "delete", err);
+    console.error("[Friend Request Error]", err);
     return false;
   }
 }
