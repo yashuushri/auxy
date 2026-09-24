@@ -9,6 +9,7 @@ import {
   searchUsersWithFriendStatus,
   getFriendshipStatus,
 } from "@/lib/server-store";
+import { searchSupabaseProfiles } from "@/lib/supabase-db";
 
 export async function GET(req: NextRequest) {
   try {
@@ -20,8 +21,36 @@ export async function GET(req: NextRequest) {
     // If searching users
     if (search !== null) {
       const current = (searchParams.get("current") || username || "").trim().toLowerCase();
-      const results = searchUsersWithFriendStatus(search, current);
-      return NextResponse.json({ success: true, users: results });
+      const localResults = searchUsersWithFriendStatus(search, current);
+      const remoteResults = await searchSupabaseProfiles(search, current);
+
+      const map = new Map<string, {
+        username: string;
+        displayName: string;
+        avatar: string;
+        bio?: string;
+        isOnline: boolean;
+        friendStatus: "friends" | "pending_sent" | "pending_received" | "none";
+        requestId?: string;
+      }>();
+
+      // First populate remote profiles
+      for (const r of remoteResults) {
+        const uKey = r.username.toLowerCase().trim();
+        const status = getFriendshipStatus(current, r.username);
+        map.set(uKey, {
+          ...r,
+          friendStatus: status,
+        });
+      }
+
+      // Then override/merge with local in-memory results
+      for (const l of localResults) {
+        const uKey = l.username.toLowerCase().trim();
+        map.set(uKey, l);
+      }
+
+      return NextResponse.json({ success: true, users: Array.from(map.values()) });
     }
 
     if (!username) {

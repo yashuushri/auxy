@@ -1466,3 +1466,56 @@ export async function deleteBackgroundMetadataFromSupabase(idOrUrl: string): Pro
   }
 }
 
+// ============================================================================
+// SUPABASE REMOTE SEARCH PROFILES
+// ============================================================================
+
+export interface RemoteProfileSearchResult {
+  username: string;
+  displayName: string;
+  avatar: string;
+  bio?: string;
+  isOnline: boolean;
+  friendStatus: "friends" | "pending_sent" | "pending_received" | "none";
+  requestId?: string;
+}
+
+export async function searchSupabaseProfiles(
+  query: string,
+  currentUsername: string
+): Promise<RemoteProfileSearchResult[]> {
+  const supabase = getSupabase();
+  if (!supabase) return [];
+  const cleanQ = query.trim().toLowerCase();
+  const cleanCurrent = cleanUsername(currentUsername);
+  if (!cleanQ) return [];
+
+  try {
+    const { data: profiles, error } = await supabase
+      .from("profiles")
+      .select("id, username, display_name, avatar, bio, updated_at")
+      .or(`username.ilike.%${cleanQ}%,display_name.ilike.%${cleanQ}%`)
+      .limit(30);
+
+    if (error || !Array.isArray(profiles)) return [];
+
+    return profiles
+      .filter((p) => p && p.username && cleanUsername(p.username) !== cleanCurrent)
+      .map((p) => {
+        const uClean = cleanUsername(p.username);
+        return {
+          username: p.username,
+          displayName: p.display_name || p.username,
+          avatar: p.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${uClean}`,
+          bio: p.bio || undefined,
+          isOnline: true,
+          friendStatus: "none" as const,
+        };
+      });
+  } catch (err) {
+    console.warn("[Supabase DB] searchSupabaseProfiles error:", err);
+    return [];
+  }
+}
+
+
