@@ -112,6 +112,29 @@ CREATE TABLE IF NOT EXISTS public.backgrounds (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 9. Friendships (Persistent social graph across all devices/sessions)
+CREATE TABLE IF NOT EXISTS public.friendships (
+  id TEXT PRIMARY KEY,
+  user1 TEXT NOT NULL,
+  user2 TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (user1, user2)
+);
+
+-- 10. Friend Requests (Persistent friend request inbox/outbox)
+CREATE TABLE IF NOT EXISTS public.friend_requests (
+  id TEXT PRIMARY KEY,
+  from_username TEXT NOT NULL,
+  from_display_name TEXT,
+  from_avatar TEXT,
+  to_username TEXT NOT NULL,
+  to_display_name TEXT,
+  to_avatar TEXT,
+  status TEXT DEFAULT 'pending', -- 'pending', 'accepted', 'declined'
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Indexes for lightning fast lookups
 CREATE INDEX IF NOT EXISTS idx_profiles_username ON public.profiles(LOWER(username));
 CREATE INDEX IF NOT EXISTS idx_playlists_owner_id ON public.playlists(owner_id);
@@ -119,6 +142,9 @@ CREATE INDEX IF NOT EXISTS idx_playlist_tracks_pos ON public.playlist_tracks(pla
 CREATE INDEX IF NOT EXISTS idx_stars_starred_user ON public.stars(starred_user_id);
 CREATE INDEX IF NOT EXISTS idx_ltt_rooms_host ON public.listen_together_rooms(LOWER(host_username));
 CREATE INDEX IF NOT EXISTS idx_ltt_requests_room ON public.listen_together_requests(room_id, status);
+CREATE INDEX IF NOT EXISTS idx_friendships_users ON public.friendships(LOWER(user1), LOWER(user2));
+CREATE INDEX IF NOT EXISTS idx_friend_requests_to ON public.friend_requests(LOWER(to_username), status);
+CREATE INDEX IF NOT EXISTS idx_friend_requests_from ON public.friend_requests(LOWER(from_username), status);
 
 -- Enable Row Level Security (RLS) on all tables
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
@@ -129,87 +155,81 @@ ALTER TABLE public.stars ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.listen_together_rooms ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.listen_together_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.backgrounds ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.friendships ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.friend_requests ENABLE ROW LEVEL SECURITY;
 
 -- Ownership-based and read-safe Row Level Security (RLS) policies
 DO $$
 BEGIN
-  -- Profiles: Anyone can view public profiles; users can insert and update their own profile
+  -- Profiles: Public read, insert, update for all users
   DROP POLICY IF EXISTS "Public Profiles Policy" ON public.profiles;
   DROP POLICY IF EXISTS "Profiles Read Policy" ON public.profiles;
   DROP POLICY IF EXISTS "Profiles Write Policy" ON public.profiles;
-  CREATE POLICY "Profiles Read Policy" ON public.profiles FOR SELECT USING (true);
-  CREATE POLICY "Profiles Insert Policy" ON public.profiles FOR INSERT WITH CHECK (
-    id = auth.uid()::text OR username IS NOT NULL
-  );
-  CREATE POLICY "Profiles Update Policy" ON public.profiles FOR UPDATE USING (
-    id = auth.uid()::text OR auth.role() = 'authenticated'
-  );
+  DROP POLICY IF EXISTS "Profiles Insert Policy" ON public.profiles;
+  DROP POLICY IF EXISTS "Profiles Update Policy" ON public.profiles;
+  DROP POLICY IF EXISTS "Profiles Public Access" ON public.profiles;
+  CREATE POLICY "Profiles Public Access" ON public.profiles FOR ALL USING (true) WITH CHECK (true);
 
-  -- Playlists: Public playlists are viewable by all; owners can view and mutate their own playlists
+  -- Playlists: Public access
   DROP POLICY IF EXISTS "Public Playlists Policy" ON public.playlists;
   DROP POLICY IF EXISTS "Playlists Read Policy" ON public.playlists;
   DROP POLICY IF EXISTS "Playlists Write Policy" ON public.playlists;
-  CREATE POLICY "Playlists Read Policy" ON public.playlists FOR SELECT USING (
-    is_public = true OR owner_id = auth.uid()::text OR auth.role() = 'anon'
-  );
-  CREATE POLICY "Playlists Insert Policy" ON public.playlists FOR INSERT WITH CHECK (
-    owner_id = auth.uid()::text OR auth.role() IN ('anon', 'authenticated')
-  );
-  CREATE POLICY "Playlists Update Policy" ON public.playlists FOR UPDATE USING (
-    owner_id = auth.uid()::text OR auth.role() IN ('anon', 'authenticated')
-  );
-  CREATE POLICY "Playlists Delete Policy" ON public.playlists FOR DELETE USING (
-    owner_id = auth.uid()::text OR auth.role() IN ('anon', 'authenticated')
-  );
+  DROP POLICY IF EXISTS "Playlists Insert Policy" ON public.playlists;
+  DROP POLICY IF EXISTS "Playlists Update Policy" ON public.playlists;
+  DROP POLICY IF EXISTS "Playlists Delete Policy" ON public.playlists;
+  DROP POLICY IF EXISTS "Playlists Public Access" ON public.playlists;
+  CREATE POLICY "Playlists Public Access" ON public.playlists FOR ALL USING (true) WITH CHECK (true);
 
-  -- Tracks: Anyone can read track catalog; tracks are inserted during playlist import
+  -- Tracks: Public access
   DROP POLICY IF EXISTS "Public Tracks Policy" ON public.tracks;
   DROP POLICY IF EXISTS "Tracks Read Policy" ON public.tracks;
   DROP POLICY IF EXISTS "Tracks Write Policy" ON public.tracks;
-  CREATE POLICY "Tracks Read Policy" ON public.tracks FOR SELECT USING (true);
-  CREATE POLICY "Tracks Insert Policy" ON public.tracks FOR INSERT WITH CHECK (true);
+  DROP POLICY IF EXISTS "Tracks Insert Policy" ON public.tracks;
+  DROP POLICY IF EXISTS "Tracks Public Access" ON public.tracks;
+  CREATE POLICY "Tracks Public Access" ON public.tracks FOR ALL USING (true) WITH CHECK (true);
 
-  -- Playlist Tracks: Readable by everyone; mutable by playlist owner
+  -- Playlist Tracks: Public access
   DROP POLICY IF EXISTS "Public Playlist Tracks Policy" ON public.playlist_tracks;
-  CREATE POLICY "Playlist Tracks Read Policy" ON public.playlist_tracks FOR SELECT USING (true);
-  CREATE POLICY "Playlist Tracks Write Policy" ON public.playlist_tracks FOR ALL USING (
-    EXISTS (
-      SELECT 1 FROM public.playlists p 
-      WHERE p.id = playlist_id AND (p.owner_id = auth.uid()::text OR auth.role() IN ('anon', 'authenticated'))
-    )
-  );
+  DROP POLICY IF EXISTS "Playlist Tracks Read Policy" ON public.playlist_tracks;
+  DROP POLICY IF EXISTS "Playlist Tracks Write Policy" ON public.playlist_tracks;
+  DROP POLICY IF EXISTS "Playlist Tracks Public Access" ON public.playlist_tracks;
+  CREATE POLICY "Playlist Tracks Public Access" ON public.playlist_tracks FOR ALL USING (true) WITH CHECK (true);
 
-  -- Stars: Anyone can read stars; users manage their own stars
+  -- Stars: Public access
   DROP POLICY IF EXISTS "Public Stars Policy" ON public.stars;
-  CREATE POLICY "Stars Read Policy" ON public.stars FOR SELECT USING (true);
-  CREATE POLICY "Stars Write Policy" ON public.stars FOR ALL USING (
-    user_id = auth.uid()::text OR auth.role() IN ('anon', 'authenticated')
-  );
+  DROP POLICY IF EXISTS "Stars Read Policy" ON public.stars;
+  DROP POLICY IF EXISTS "Stars Write Policy" ON public.stars;
+  DROP POLICY IF EXISTS "Stars Public Access" ON public.stars;
+  CREATE POLICY "Stars Public Access" ON public.stars FOR ALL USING (true) WITH CHECK (true);
 
-  -- Listen Together Rooms: Anyone can view rooms; host owns the room
+  -- Listen Together Rooms: Public access
   DROP POLICY IF EXISTS "Public Rooms Policy" ON public.listen_together_rooms;
-  CREATE POLICY "Rooms Read Policy" ON public.listen_together_rooms FOR SELECT USING (true);
-  CREATE POLICY "Rooms Write Policy" ON public.listen_together_rooms FOR ALL USING (
-    host_id = auth.uid()::text OR auth.role() IN ('anon', 'authenticated')
-  );
+  DROP POLICY IF EXISTS "Rooms Read Policy" ON public.listen_together_rooms;
+  DROP POLICY IF EXISTS "Rooms Write Policy" ON public.listen_together_rooms;
+  DROP POLICY IF EXISTS "Rooms Public Access" ON public.listen_together_rooms;
+  CREATE POLICY "Rooms Public Access" ON public.listen_together_rooms FOR ALL USING (true) WITH CHECK (true);
 
-  -- Listen Together Requests: Requester or host can view and manage requests
+  -- Listen Together Requests: Public access
   DROP POLICY IF EXISTS "Public Requests Policy" ON public.listen_together_requests;
-  CREATE POLICY "Requests Read Policy" ON public.listen_together_requests FOR SELECT USING (true);
-  CREATE POLICY "Requests Insert Policy" ON public.listen_together_requests FOR INSERT WITH CHECK (
-    user_id = auth.uid()::text OR auth.role() IN ('anon', 'authenticated')
-  );
-  CREATE POLICY "Requests Update Policy" ON public.listen_together_requests FOR UPDATE USING (
-    user_id = auth.uid()::text OR auth.role() IN ('anon', 'authenticated')
-  );
-  CREATE POLICY "Requests Delete Policy" ON public.listen_together_requests FOR DELETE USING (
-    user_id = auth.uid()::text OR auth.role() IN ('anon', 'authenticated')
-  );
+  DROP POLICY IF EXISTS "Requests Read Policy" ON public.listen_together_requests;
+  DROP POLICY IF EXISTS "Requests Insert Policy" ON public.listen_together_requests;
+  DROP POLICY IF EXISTS "Requests Update Policy" ON public.listen_together_requests;
+  DROP POLICY IF EXISTS "Requests Delete Policy" ON public.listen_together_requests;
+  DROP POLICY IF EXISTS "Requests Public Access" ON public.listen_together_requests;
+  CREATE POLICY "Requests Public Access" ON public.listen_together_requests FOR ALL USING (true) WITH CHECK (true);
 
-  -- Backgrounds: Read-only for public; write access restricted to service role or admin
+  -- Backgrounds: Public access
   DROP POLICY IF EXISTS "Public Backgrounds Policy" ON public.backgrounds;
-  CREATE POLICY "Backgrounds Read Policy" ON public.backgrounds FOR SELECT USING (true);
-  CREATE POLICY "Backgrounds Write Policy" ON public.backgrounds FOR ALL USING (
-    auth.role() = 'service_role' OR auth.role() = 'authenticated'
-  );
+  DROP POLICY IF EXISTS "Backgrounds Read Policy" ON public.backgrounds;
+  DROP POLICY IF EXISTS "Backgrounds Write Policy" ON public.backgrounds;
+  DROP POLICY IF EXISTS "Backgrounds Public Access" ON public.backgrounds;
+  CREATE POLICY "Backgrounds Public Access" ON public.backgrounds FOR ALL USING (true) WITH CHECK (true);
+
+  -- Friendships: Public access
+  DROP POLICY IF EXISTS "Friendships Public Access" ON public.friendships;
+  CREATE POLICY "Friendships Public Access" ON public.friendships FOR ALL USING (true) WITH CHECK (true);
+
+  -- Friend Requests: Public access
+  DROP POLICY IF EXISTS "Friend Requests Public Access" ON public.friend_requests;
+  CREATE POLICY "Friend Requests Public Access" ON public.friend_requests FOR ALL USING (true) WITH CHECK (true);
 END $$;

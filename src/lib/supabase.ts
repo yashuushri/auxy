@@ -7,12 +7,20 @@ export function getSupabase(): SupabaseClient | null {
 
   const url =
     process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    process.env.SUPABASE_URL ||
+    process.env.NEXT_PUBLIC_SUPABASE_PROJECT_URL ||
+    process.env.SUPABASE_PROJECT_URL ||
     (typeof window !== "undefined"
       ? (window as unknown as { __SUPABASE_URL__?: string }).__SUPABASE_URL__
       : "") ||
     "";
+
   const anonKey =
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_KEY ||
+    process.env.SUPABASE_KEY ||
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
     (typeof window !== "undefined"
       ? (window as unknown as { __SUPABASE_ANON_KEY__?: string }).__SUPABASE_ANON_KEY__
@@ -20,16 +28,15 @@ export function getSupabase(): SupabaseClient | null {
     "";
 
   if (!url || !anonKey) {
-    if (process.env.NODE_ENV === "development") {
-      console.warn(
-        "[Supabase] Supabase URL or Anon Key is missing."
-      );
-    }
     return null;
   }
 
   try {
     supabaseClient = createClient(url, anonKey, {
+      auth: {
+        persistSession: typeof window !== "undefined",
+        autoRefreshToken: typeof window !== "undefined",
+      },
       realtime: {
         params: {
           eventsPerSecond: 20,

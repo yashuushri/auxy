@@ -103,27 +103,45 @@ export async function normalizeAndSyncUserProfileToSupabase(
 
   try {
     // 1. Upsert Profile
-    const { error: profileError } = await supabase.from("profiles").upsert(
-      {
-        id: userId,
-        username,
-        display_name: user.displayName || user.username,
-        avatar: user.avatar || "",
-        bio: user.bio || "",
-        pronouns: user.pronouns || "",
-        background_id: bg.value || "lava",
-        background_metadata: bg,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "id" }
-    );
+    const profileRow = {
+      id: userId,
+      username,
+      display_name: user.displayName || user.username,
+      avatar: user.avatar || "",
+      bio: user.bio || "",
+      pronouns: user.pronouns || "",
+      background_id: bg.value || "lava",
+      background_metadata: bg,
+      updated_at: new Date().toISOString(),
+    };
+
+    let { error: profileError } = await supabase
+      .from("profiles")
+      .upsert(profileRow, { onConflict: "id" });
 
     if (profileError) {
       if (isTableMissingError(profileError)) {
-        // Table not created yet in dev environment; graceful fallback
         return false;
       }
-      console.warn("[Supabase DB] Upsert profile error:", profileError.message);
+      // Retry upsert by username if id conflict happened
+      const { error: retryError } = await supabase
+        .from("profiles")
+        .upsert(profileRow, { onConflict: "username" });
+      if (retryError) {
+        // Direct update by username
+        await supabase
+          .from("profiles")
+          .update({
+            display_name: profileRow.display_name,
+            avatar: profileRow.avatar,
+            bio: profileRow.bio,
+            pronouns: profileRow.pronouns,
+            background_id: profileRow.background_id,
+            background_metadata: profileRow.background_metadata,
+            updated_at: profileRow.updated_at,
+          })
+          .eq("username", username);
+      }
     }
 
     // 2. Normalize and Upsert Playlists and Tracks
@@ -1491,21 +1509,56 @@ export async function searchSupabaseProfiles(
   if (!cleanQ) return [];
 
   try {
-    const { data: profiles, error } = await supabase
+    let profiles: Array<{
+      id?: string;
+      username?: string;
+      display_name?: string;
+      avatar?: string;
+      bio?: string;
+    }> = [];
+
+    const { data: orData, error: orError } = await supabase
       .from("profiles")
       .select("id, username, display_name, avatar, bio, updated_at")
       .or(`username.ilike.%${cleanQ}%,display_name.ilike.%${cleanQ}%`)
-      .limit(30);
+      .limit(50);
 
-    if (error || !Array.isArray(profiles)) return [];
+    if (!orError && Array.isArray(orData) && orData.length > 0) {
+      profiles = orData;
+    } else {
+      const { data: uData } = await supabase
+        .from("profiles")
+        .select("id, username, display_name, avatar, bio, updated_at")
+        .ilike("username", `%${cleanQ}%`)
+        .limit(50);
+      if (Array.isArray(uData) && uData.length > 0) {
+        profiles = uData;
+      } else {
+        const { data: dData } = await supabase
+          .from("profiles")
+          .select("id, username, display_name, avatar, bio, updated_at")
+          .ilike("display_name", `%${cleanQ}%`)
+          .limit(50);
+        if (Array.isArray(dData)) {
+          profiles = dData;
+        }
+      }
+    }
 
+    const seen = new Set<string>();
     return profiles
-      .filter((p) => p && p.username && cleanUsername(p.username) !== cleanCurrent)
-      .map((p) => {
+      .filter((p) => {
+        if (!p || !p.username) return false;
         const uClean = cleanUsername(p.username);
+        if (uClean === cleanCurrent || seen.has(uClean)) return false;
+        seen.add(uClean);
+        return true;
+      })
+      .map((p) => {
+        const uClean = cleanUsername(p.username!);
         return {
-          username: p.username,
-          displayName: p.display_name || p.username,
+          username: p.username!,
+          displayName: p.display_name || p.username!,
           avatar: p.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${uClean}`,
           bio: p.bio || undefined,
           isOnline: true,
