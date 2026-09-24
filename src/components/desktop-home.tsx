@@ -76,13 +76,13 @@ export function DesktopHome() {
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [sidebarView, setSidebarView] = useState<"main" | "widget" | "about">("main");
 
-  // Active desktop draggable widgets state
+  // Active desktop draggable widgets state - empty by default on first login / new accounts
   const [activeWidgets, setActiveWidgets] = useState<ActiveWidgetsState>({
-    clock: true,
-    calendar: true,
+    clock: false,
+    calendar: false,
     vinyl: false,
     notes: false,
-    dock: true,
+    dock: false,
   });
 
   const [playerLayout, setPlayerLayout] = useState<
@@ -96,11 +96,13 @@ export function DesktopHome() {
       const saved = localStorage.getItem(`auxy_widgets_${usernameKey(user.username)}`);
       if (saved) {
         const parsed = JSON.parse(saved);
-        setActiveWidgets((prev) => ({
-          ...prev,
-          ...parsed,
-          dock: parsed.dock !== undefined ? parsed.dock : true,
-        }));
+        setActiveWidgets({
+          clock: Boolean(parsed.clock),
+          calendar: Boolean(parsed.calendar),
+          vinyl: Boolean(parsed.vinyl),
+          notes: Boolean(parsed.notes),
+          dock: Boolean(parsed.dock),
+        });
       }
     } catch {}
   }, [user]);
