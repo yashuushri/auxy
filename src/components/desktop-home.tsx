@@ -40,7 +40,6 @@ import {
   LeaveRoomDialog,
 } from "@/components/listen-together-dialogs";
 import { UpgradeDialog } from "@/components/upgrade-dialog";
-import { FluidGlassButton } from "@/components/ui/fluid-glass-button";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/auth-context";
 import { useListenTogether } from "@/context/listen-together-context";
@@ -343,10 +342,6 @@ export function DesktopHome() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <FluidGlassButton
-                      text="Upgrade"
-                      onClick={() => setUpgradeOpen(true)}
-                    />
                     <Button
                       size="icon-sm"
                       variant="ghost"
@@ -370,10 +365,6 @@ export function DesktopHome() {
                     </span>
                   </button>
                   <div className="flex items-center gap-2">
-                    <FluidGlassButton
-                      text="Upgrade"
-                      onClick={() => setUpgradeOpen(true)}
-                    />
                     <Button
                       size="icon-sm"
                       variant="ghost"
