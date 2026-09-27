@@ -476,48 +476,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // --- Strategy 2b: Complement with Next API if we have at least one track or playlistId ---
-    if (playlistId && allTracks.length > 0) {
-      try {
-        const firstVid = allTracks[0]?.videoId;
-        const nextBody: Record<string, unknown> = {
-          context: {
-            client: {
-              clientName: "WEB",
-              clientVersion: "2.20240101.00.00",
-              hl: "en",
-              gl: "US",
-            },
-          },
-          playlistId,
-        };
-        if (firstVid) nextBody.videoId = firstVid;
-
-        const nextRes = await fetch("https://www.youtube.com/youtubei/v1/next?prettyPrint=false", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "X-YouTube-Client-Name": "1",
-            "X-YouTube-Client-Version": "2.20240101.00.00",
-          },
-          body: JSON.stringify(nextBody),
-          cache: "no-store",
-        });
-
-        if (nextRes.ok) {
-          const data = await nextRes.json();
-          const pNext = extractTracksAndContinuation(data);
-          appendUniqueTracks(pNext.tracks);
-          if (pNext.playlistTitle && !playlistTitle) playlistTitle = pNext.playlistTitle;
-        }
-      } catch (compErr) {
-        console.warn("[Playlist Info API] Complementary Next API fetch failed:", compErr);
-      }
-    }
-
-    // --- Strategy 3: HTML Scraping with GDPR/Consent Bypass & Continuation ---
+    // --- Strategy 3: HTML Scraping with GDPR/Consent Bypass & Continuation (Fallback if Innertube browse returned 0 tracks) ---
     if (playlistId && allTracks.length === 0) {
       try {
         const targetUrl =

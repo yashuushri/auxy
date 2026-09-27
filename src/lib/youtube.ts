@@ -24,23 +24,29 @@ export function parseYouTubeUrl(input: string): ParsedYouTubeInput {
     return { type: "video", videoId: raw };
   }
 
+  // If raw playlist ID (e.g. PL..., OLAK..., etc.)
+  if (/^(?:PL|OLAK|UU|FL|RD|LL|WL)[A-Za-z0-9_-]{10,}$/i.test(raw)) {
+    return { type: "playlist", playlistId: raw };
+  }
+
   try {
     const url = new URL(raw.startsWith("http") ? raw : `https://${raw}`);
     const host = url.hostname.toLowerCase();
-
-    // Check playlist param first
     const listParam = url.searchParams.get("list");
     const vParam = url.searchParams.get("v");
 
-    if (listParam && listParam !== "WL" && listParam !== "LL") {
-      return {
-        type: "playlist",
-        playlistId: listParam,
-        videoId: vParam || undefined,
-      };
+    // 1. If explicitly a playlist endpoint (/playlist?list=...)
+    if (url.pathname === "/playlist" || url.pathname.startsWith("/playlist/")) {
+      if (listParam && listParam !== "WL" && listParam !== "LL") {
+        return {
+          type: "playlist",
+          playlistId: listParam,
+          videoId: vParam || undefined,
+        };
+      }
     }
 
-    // Check youtu.be
+    // 2. Check youtu.be (single video)
     if (host === "youtu.be") {
       const id = url.pathname.slice(1).split("/")[0];
       if (id && /^[A-Za-z0-9_-]{11}$/.test(id)) {
@@ -48,12 +54,8 @@ export function parseYouTubeUrl(input: string): ParsedYouTubeInput {
       }
     }
 
-    // Check youtube.com / m.youtube.com
+    // 3. Check youtube.com / m.youtube.com / music.youtube.com
     if (host.includes("youtube.com")) {
-      if (vParam && /^[A-Za-z0-9_-]{11}$/.test(vParam)) {
-        return { type: "video", videoId: vParam };
-      }
-
       // Shorts
       const shortsMatch = url.pathname.match(/\/shorts\/([A-Za-z0-9_-]{11})/);
       if (shortsMatch) {
@@ -65,18 +67,33 @@ export function parseYouTubeUrl(input: string): ParsedYouTubeInput {
       if (embedMatch) {
         return { type: "video", videoId: embedMatch[1] };
       }
+
+      // If watch?v=... exists, always treat as single video (even if &list= is in the URL)
+      if (vParam && /^[A-Za-z0-9_-]{11}$/.test(vParam)) {
+        return { type: "video", videoId: vParam };
+      }
+
+      // If no video ID and listParam is present, then it is a playlist
+      if (listParam && listParam !== "WL" && listParam !== "LL") {
+        return {
+          type: "playlist",
+          playlistId: listParam,
+          videoId: undefined,
+        };
+      }
     }
   } catch {
     // Regex fallback
-    const plMatch = raw.match(/[?&]list=([A-Za-z0-9_-]+)/);
     const vMatch = raw.match(
       /(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/))([A-Za-z0-9_-]{11})/
     );
-    if (plMatch && plMatch[1] !== "WL" && plMatch[1] !== "LL") {
-      return { type: "playlist", playlistId: plMatch[1], videoId: vMatch?.[1] };
-    }
     if (vMatch) {
       return { type: "video", videoId: vMatch[1] };
+    }
+
+    const plMatch = raw.match(/[?&]list=([A-Za-z0-9_-]+)/);
+    if (plMatch && plMatch[1] !== "WL" && plMatch[1] !== "LL") {
+      return { type: "playlist", playlistId: plMatch[1] };
     }
   }
 

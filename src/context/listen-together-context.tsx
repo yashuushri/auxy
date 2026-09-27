@@ -72,21 +72,13 @@ interface ListenTogetherContextValue {
 
 const ListenTogetherContext = createContext<ListenTogetherContextValue | null>(null);
 
+const LISTEN_TOGETHER_ACTIVE = false;
+
 export function ListenTogetherProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const player = usePlayer();
 
-  const [activeHostUsername, setActiveHostUsername] = useState<string | null>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        return sessionStorage.getItem("auxy_listening_host");
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  });
-
+  const [activeHostUsername, setActiveHostUsername] = useState<string | null>(null);
   const [room, setRoom] = useState<Room | null>(null);
   const [liveBackground, setLiveBackground] = useState<Background | null>(null);
   const [hostDisplayName, setHostDisplayName] = useState<string>("");
@@ -97,19 +89,14 @@ export function ListenTogetherProvider({ children }: { children: React.ReactNode
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("DISCONNECTED");
 
   // Host room settings local cache
-  const [listenTogetherEnabled, setListenTogetherEnabled] = useState<boolean>(true);
+  const [listenTogetherEnabled, setListenTogetherEnabled] = useState<boolean>(false);
   const [privacy, setPrivacy] = useState<"public" | "friends">("friends");
   const [autoAccept, setAutoAccept] = useState<boolean>(false);
 
-  const isListener = Boolean(
-    activeHostUsername && (!user || activeHostUsername.toLowerCase() !== user.username.toLowerCase())
-  );
-  const isHost = Boolean(
-    user && (!activeHostUsername || activeHostUsername.toLowerCase() === user.username.toLowerCase())
-  );
-
-  const hostRoomId = user ? getRoomDocId(user.username) : null;
-  const activeRoomId = isListener && activeHostUsername ? getRoomDocId(activeHostUsername) : hostRoomId;
+  const isListener = false;
+  const isHost = false;
+  const hostRoomId = null;
+  const activeRoomId = null;
 
   // Synchronization refs
   const stateVersionRef = useRef<number>(1);

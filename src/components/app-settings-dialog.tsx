@@ -151,20 +151,6 @@ export function AppSettingsDialog({
 
           <button
             type="button"
-            onClick={() => setActiveTab("listenTogether")}
-            className={cn(
-              "flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer",
-              activeTab === "listenTogether"
-                ? "bg-white text-black"
-                : "text-white/70 hover:text-white hover:bg-white/10"
-            )}
-          >
-            <Radio className="size-3.5" />
-            Listen Together
-          </button>
-
-          <button
-            type="button"
             onClick={() => setActiveTab("account")}
             className={cn(
               "flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer",

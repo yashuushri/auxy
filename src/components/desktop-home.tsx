@@ -198,52 +198,6 @@ export function DesktopHome() {
               : "opacity-100 scale-100"
           )}
         >
-          {/* Host Mode Controls */}
-          {isHost && (
-            <>
-              {/* Bell Join Requests Indicator */}
-              {pendingRequests.length > 0 && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setRequestsOpen(true)}
-                  className="border-amber-500/40 bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 backdrop-blur-md animate-pulse shadow-lg"
-                >
-                  <Bell className="size-4 mr-1 text-amber-300 animate-bounce" />
-                  <span className="font-semibold text-xs">{pendingRequests.length}</span>
-                </Button>
-              )}
-            </>
-          )}
-
-          {/* Eye / Active Listeners Button: ONLY visible if listenerCount > 0, direct eye without box/container, count on bottom-right corner */}
-          {listenerCount > 0 && (
-            <button
-              type="button"
-              onClick={() => setListenersOpen(true)}
-              title={`${listenerCount} listener${listenerCount > 1 ? "s" : ""} in room`}
-              className="pointer-events-auto relative p-1.5 text-white/90 hover:text-white transition-all hover:scale-110 cursor-pointer select-none focus:outline-none"
-            >
-              <Eye className="size-5 drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]" />
-              <span className="absolute -bottom-0.5 -right-0.5 min-w-[15px] h-[15px] px-1 flex items-center justify-center rounded-full bg-emerald-500 text-[9px] font-bold text-black shadow-md border border-black/30 leading-none">
-                {listenerCount}
-              </span>
-            </button>
-          )}
-
-          {/* Listener Mode Controls */}
-          {isListener && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setLeaveOpen(true)}
-              className="border-red-500/40 bg-red-500/20 text-red-200 hover:bg-red-500/30 backdrop-blur-md shadow-sm text-xs font-semibold"
-            >
-              <LogOut className="size-3.5 mr-1 text-red-300" />
-              My Room
-            </Button>
-          )}
-
           <Button
             size="sm"
             variant="outline"
@@ -412,25 +366,6 @@ export function DesktopHome() {
                     Room
                   </button>
 
-                  {/* Join Requests */}
-                  {pendingRequests.length > 0 && (
-                    <button
-                      onClick={() => {
-                        setSidebarOpen(false);
-                        setRequestsOpen(true);
-                      }}
-                      className="flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-sm font-medium text-amber-300 bg-amber-500/10 border border-amber-500/20 hover:bg-amber-500/20 transition-colors cursor-pointer text-left"
-                    >
-                      <div className="flex items-center gap-3">
-                        <Bell className="size-4" />
-                        <span>Join Requests</span>
-                      </div>
-                      <span className="rounded-full bg-amber-500 text-black text-[10px] font-bold px-2 py-0.5">
-                        {pendingRequests.length}
-                      </span>
-                    </button>
-                  )}
-
                   {/* Widget */}
                   <button
                     onClick={() => setSidebarView("widget")}
@@ -440,20 +375,6 @@ export function DesktopHome() {
                       <LayoutGrid />
                     </div>
                     Widget
-                  </button>
-
-                  {/* Explore */}
-                  <button
-                    onClick={() => {
-                      setSidebarOpen(false);
-                      setExploreOpen(true);
-                    }}
-                    className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-white/80 transition-colors hover:bg-white/10 hover:text-white cursor-pointer text-left"
-                  >
-                    <div className="opacity-70 [&>svg]:size-4">
-                      <Compass />
-                    </div>
-                    Explore
                   </button>
 
                   {/* Settings */}
