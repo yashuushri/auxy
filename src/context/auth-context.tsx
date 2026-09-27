@@ -184,10 +184,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           });
           const data = await res.json();
           if (data.ok && data.found && data.user && !cancelled) {
-            local = data.user;
-            saveUser(local);
-            setSessionUsername(local.username);
-            setUser(withDefaultAvatar(local));
+            const fetchedUser: UserAccount = data.user;
+            local = fetchedUser;
+            saveUser(fetchedUser);
+            setSessionUsername(fetchedUser.username);
+            setUser(withDefaultAvatar(fetchedUser));
           }
         } catch (e) {
           console.warn("Failed to fetch session profile from server", e);

@@ -3,14 +3,11 @@
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import {
-  Bell,
   ChevronLeft,
   Clock,
   Calendar as CalendarIcon,
-  Compass,
   Disc,
   ExternalLink,
-  Eye,
   Info,
   LayoutGrid,
   LogOut,
@@ -56,11 +53,8 @@ import {
 export function DesktopHome() {
   const { user, logout } = useAuth();
   const {
-    isHost,
     isListener,
     activeHostUsername,
-    participants,
-    pendingRequests,
     effectiveBackground,
   } = useListenTogether();
 
@@ -129,13 +123,6 @@ export function DesktopHome() {
       return updated;
     });
   };
-
-  // Listeners count calculation (exclude room host)
-  const roomHost = isListener && activeHostUsername ? activeHostUsername : (user?.username || "");
-  const activeListeners = participants.filter(
-    (p) => p.username.toLowerCase() !== roomHost.toLowerCase()
-  );
-  const listenerCount = activeListeners.length;
 
   const userLoggedIn = Boolean(user);
 

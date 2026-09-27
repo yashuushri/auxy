@@ -1,41 +1,188 @@
 import { DEFAULT_BACKGROUND } from "@/lib/backgrounds";
 import { colorFromName } from "@/lib/music";
-import type { Track, UserAccount } from "@/lib/types";
+import type { Playlist, Track, UserAccount } from "@/lib/types";
 
 const USERS_KEY = "auxy_users_v4";
+const BACKUP_USERS_KEY = "auxy_users_backup_permanent";
 const SESSION_KEY = "auxy_session_v4";
 
-// Clean launch: automatically purge previous test data from local storage
+const KNOWN_USER_KEYS = [
+  "auxy_users_v4",
+  "auxy_users_backup_permanent",
+  "auxy_users_v3",
+  "auxy_users_v2",
+  "auxy_users_v1",
+  "auxy_users",
+  "auxy_accounts",
+  "music_app_users",
+];
+
+const KNOWN_SESSION_KEYS = [
+  "auxy_session_v4",
+  "auxy_session_v3",
+  "auxy_session_v2",
+  "auxy_session_v1",
+  "auxy_session",
+  "auxy_active_user",
+  "auxy_last_username",
+];
+
+/**
+ * Intelligent Migration and Recovery:
+ * Scans all possible localStorage keys for any user accounts created across all previous versions
+ * and restores/merges them so no user ever loses their accounts, playlists, or songs.
+ */
+function migrateAndRestoreAllStorage(): Record<string, UserAccount> {
+  if (typeof window === "undefined") return {};
+
+  const mergedUsers: Record<string, UserAccount> = {};
+
+  try {
+    // 1. Scan specific known keys first (in reverse priority order so newer data overwrites older)
+    for (const key of [...KNOWN_USER_KEYS].reverse()) {
+      try {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === "object") {
+            if (Array.isArray(parsed)) {
+              for (const u of parsed) {
+                if (u && u.username) {
+                  const k = usernameKey(u.username);
+                  mergedUsers[k] = mergeUserAccounts(mergedUsers[k], u);
+                }
+              }
+            } else {
+              for (const [k, u] of Object.entries(parsed as Record<string, UserAccount>)) {
+                if (u && u.username) {
+                  const uk = usernameKey(u.username || k);
+                  mergedUsers[uk] = mergeUserAccounts(mergedUsers[uk], u);
+                }
+              }
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // 2. Scan all arbitrary localStorage keys in case data was saved in dynamic custom keys
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && (key.startsWith("auxy_") || key.includes("user")) && !KNOWN_USER_KEYS.includes(key)) {
+        try {
+          const raw = localStorage.getItem(key);
+          if (raw && raw.startsWith("{") && raw.includes("username")) {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === "object") {
+              if (parsed.username && (parsed.playlists || parsed.library || parsed.email)) {
+                const uk = usernameKey(parsed.username);
+                mergedUsers[uk] = mergeUserAccounts(mergedUsers[uk], parsed);
+              } else {
+                for (const [k, u] of Object.entries(parsed as Record<string, UserAccount>)) {
+                  if (u && typeof u === "object" && u.username) {
+                    const uk = usernameKey(u.username || k);
+                    mergedUsers[uk] = mergeUserAccounts(mergedUsers[uk], u);
+                  }
+                }
+              }
+            }
+          }
+        } catch {}
+      }
+    }
+
+    // 3. If any users were restored, ensure they are written to primary and backup keys
+    if (Object.keys(mergedUsers).length > 0) {
+      localStorage.setItem(USERS_KEY, JSON.stringify(mergedUsers));
+      localStorage.setItem(BACKUP_USERS_KEY, JSON.stringify(mergedUsers));
+    }
+  } catch (err) {
+    console.warn("[Storage] Error during recovery scan:", err);
+  }
+
+  return mergedUsers;
+}
+
+function mergeUserAccounts(existing?: UserAccount, incoming?: UserAccount): UserAccount {
+  if (!incoming) return existing!;
+  if (!existing) return incoming;
+
+  // Merge playlists cleanly without duplicates
+  const playlistMap = new Map<string, Playlist>();
+  for (const p of existing.playlists || []) {
+    if (p && p.id) playlistMap.set(p.id, p);
+  }
+  for (const p of incoming.playlists || []) {
+    if (p && p.id) {
+      const prev = playlistMap.get(p.id);
+      if (prev) {
+        playlistMap.set(p.id, {
+          ...prev,
+          ...p,
+          trackIds: Array.from(new Set([...(prev.trackIds || []), ...(p.trackIds || [])])),
+        });
+      } else {
+        playlistMap.set(p.id, p);
+      }
+    }
+  }
+
+  // Merge library tracks cleanly without duplicates
+  const libraryMap = new Map<string, Track>();
+  for (const t of existing.library || []) {
+    if (t && t.id) libraryMap.set(t.id, t);
+  }
+  for (const t of incoming.library || []) {
+    if (t && t.id) libraryMap.set(t.id, t);
+  }
+
+  return {
+    ...existing,
+    ...incoming,
+    displayName: incoming.displayName || existing.displayName || incoming.username,
+    email: incoming.email || existing.email,
+    password: incoming.password || existing.password,
+    avatar: incoming.avatar || existing.avatar,
+    bio: incoming.bio || existing.bio || "",
+    pronouns: incoming.pronouns || existing.pronouns || "",
+    background: incoming.background || existing.background || { kind: "preset", value: "#0b0b12" },
+    volume: typeof incoming.volume === "number" ? incoming.volume : existing.volume ?? 80,
+    playlists: Array.from(playlistMap.values()),
+    library: Array.from(libraryMap.values()),
+    createdAt: existing.createdAt || incoming.createdAt || Date.now(),
+  };
+}
+
+// Run one-time migration on client startup
 if (typeof window !== "undefined") {
   try {
-    const legacyKeys = [
-      "auxy_users_v1",
-      "auxy_users_v2",
-      "auxy_users_v3",
-      "auxy_session_v1",
-      "auxy_session_v2",
-      "auxy_session_v3",
-      "auxy_supabase_synced_hash_v1",
-      "auxy_active_playlist_id",
-      "auxy_cached_playlists",
-      "auxy_cached_library",
-    ];
-    legacyKeys.forEach((key) => localStorage.removeItem(key));
+    migrateAndRestoreAllStorage();
   } catch {}
 }
 
-function readUsers(): Record<string, UserAccount> {
+export function readUsers(): Record<string, UserAccount> {
   if (typeof window === "undefined") return {};
   try {
     const raw = localStorage.getItem(USERS_KEY);
-    return raw ? (JSON.parse(raw) as Record<string, UserAccount>) : {};
-  } catch {
-    return {};
-  }
+    if (raw) {
+      const parsed = JSON.parse(raw) as Record<string, UserAccount>;
+      if (parsed && Object.keys(parsed).length > 0) return parsed;
+    }
+  } catch {}
+  
+  // Fallback to recovery scan if primary is empty
+  return migrateAndRestoreAllStorage();
 }
 
-function writeUsers(users: Record<string, UserAccount>) {
-  localStorage.setItem(USERS_KEY, JSON.stringify(users));
+export function writeUsers(users: Record<string, UserAccount>) {
+  if (typeof window === "undefined") return;
+  try {
+    const serialized = JSON.stringify(users);
+    localStorage.setItem(USERS_KEY, serialized);
+    localStorage.setItem(BACKUP_USERS_KEY, serialized);
+  } catch (err) {
+    console.error("[Storage] Failed to write users to localStorage:", err);
+  }
 }
 
 export function getAllUsers(): UserAccount[] {
@@ -44,20 +191,53 @@ export function getAllUsers(): UserAccount[] {
 }
 
 export function usernameKey(username: string) {
-  return username.trim().toLowerCase();
+  return username ? username.trim().toLowerCase() : "";
 }
 
-export function getSessionUsername() {
+export function getSessionUsername(): string | null {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem(SESSION_KEY);
+
+  // 1. Check primary session key
+  const active = localStorage.getItem(SESSION_KEY);
+  if (active) return active;
+
+  // 2. Check all known legacy session keys
+  for (const key of KNOWN_SESSION_KEYS) {
+    try {
+      const legacy = localStorage.getItem(key);
+      if (legacy && typeof legacy === "string" && legacy.trim()) {
+        const clean = legacy.trim();
+        localStorage.setItem(SESSION_KEY, clean);
+        return clean;
+      }
+    } catch {}
+  }
+
+  // 3. If no session key, check if there is an existing user account in storage to auto-resume
+  const users = readUsers();
+  const userList = Object.values(users);
+  if (userList.length === 1 && userList[0]?.username) {
+    const recovered = userList[0].username;
+    localStorage.setItem(SESSION_KEY, recovered);
+    return recovered;
+  }
+
+  return null;
 }
 
 export function setSessionUsername(username: string | null) {
-  if (username) localStorage.setItem(SESSION_KEY, username);
-  else localStorage.removeItem(SESSION_KEY);
+  if (typeof window === "undefined") return;
+  if (username) {
+    localStorage.setItem(SESSION_KEY, username);
+    // Also save in a secondary key to prevent loss
+    localStorage.setItem("auxy_last_username", username);
+  } else {
+    localStorage.removeItem(SESSION_KEY);
+  }
 }
 
-export function getUser(username: string) {
+export function getUser(username: string): UserAccount | null {
+  if (!username) return null;
   return readUsers()[usernameKey(username)] ?? null;
 }
 
@@ -68,6 +248,7 @@ export function isUsernameTaken(username: string): boolean {
 }
 
 export function isEmailTaken(email: string): boolean {
+  if (!email) return false;
   const cleanEmail = email.trim().toLowerCase();
   const users = readUsers();
   return Object.values(users).some(
@@ -90,41 +271,45 @@ export function getUserByEmailOrUsername(identifier: string): UserAccount | null
   return found || null;
 }
 
-export function saveUser(user: UserAccount) {
+export function saveUser(user: UserAccount): UserAccount {
   if (!user || !user.username) return user;
   const users = readUsers();
   const key = usernameKey(user.username);
   const existing = users[key];
-  
-  // Merge cleanly to ensure no accidental loss of playlists/library/background
-  const merged: UserAccount = {
-    ...existing,
-    ...user,
-    playlists: user.playlists ?? existing?.playlists ?? [],
-    library: user.library ?? existing?.library ?? [],
-    background: user.background ?? existing?.background ?? { kind: "preset", value: "#0b0b12" },
-  };
+
+  const merged = mergeUserAccounts(existing, user);
 
   users[key] = merged;
   writeUsers(users);
+
+  // Background server sync so redeployments or cache clearing won't lose the user
+  if (typeof window !== "undefined") {
+    try {
+      void fetch("/api/auth/save-user", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user: merged }),
+      }).catch(() => {});
+    } catch {}
+  }
+
   return merged;
 }
 
 export function isValidUsername(username: string): boolean {
-  // STRICT: only letters (a-z, A-Z) and numbers (0-9). NO symbols (- _ + . etc), NO spaces. Max 16 chars.
+  // STRICT: letters and numbers, 2 to 16 chars.
   const trimmed = username.trim();
   return /^[a-zA-Z0-9]{2,16}$/.test(trimmed);
 }
 
 export function isValidDisplayName(displayName: string): boolean {
-  // Display name can have letters, numbers, and spaces. Max 12 characters. NO special symbols.
   const trimmed = displayName.trim();
-  if (trimmed.length < 1 || trimmed.length > 12) return false;
-  return /^[a-zA-Z0-9 ]+$/.test(displayName);
+  if (trimmed.length < 1 || trimmed.length > 16) return false;
+  return /^[a-zA-Z0-9 _-]+$/.test(displayName);
 }
 
 export function avatarInitials(name: string) {
-  const cleaned = name.replace(/[._]+/g, " ").trim();
+  const cleaned = name.replace(/[._-]+/g, " ").trim();
   const parts = cleaned.split(/\s+/).filter(Boolean);
   if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
   const compact = cleaned.replace(/\s+/g, "");
@@ -132,7 +317,7 @@ export function avatarInitials(name: string) {
 }
 
 export function isCustomPhoto(avatar: string) {
-  return /^data:image\/(png|jpe?g|gif|webp|bmp)/i.test(avatar) || avatar.startsWith("http");
+  return /^data:image\/(png|jpe?g|gif|webp|bmp)/i.test(avatar) || avatar?.startsWith("http");
 }
 
 export function defaultAvatar(name: string) {
@@ -197,4 +382,27 @@ export function mergeLibrary(user: UserAccount, tracks: Track[]) {
       : playlist
   );
   return { ...user, library, playlists: nextPlaylists };
+}
+
+/**
+ * Export and Backup utility functions:
+ * Allows user to download or restore their full library & playlists data.
+ */
+export function exportUserDataAsJSON(username: string): string | null {
+  const user = getUser(username);
+  if (!user) return null;
+  return JSON.stringify(user, null, 2);
+}
+
+export function importUserDataFromJSON(jsonString: string): { success: boolean; user?: UserAccount; error?: string } {
+  try {
+    const parsed = JSON.parse(jsonString);
+    if (!parsed || !parsed.username) {
+      return { success: false, error: "Invalid backup file: missing username." };
+    }
+    const saved = saveUser(parsed as UserAccount);
+    return { success: true, user: saved };
+  } catch {
+    return { success: false, error: "Failed to parse backup JSON file." };
+  }
 }

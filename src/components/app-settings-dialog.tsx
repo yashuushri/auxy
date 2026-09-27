@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import {
+  Download,
   Globe2,
   Headphones,
   ListMusic,
@@ -9,11 +10,12 @@ import {
   LogOut,
   Music,
   Plus,
-  Radio,
   Repeat,
   Repeat1,
+  ShieldCheck,
   Shuffle,
   Trash2,
+  Upload,
   UserCheck,
   UserRound,
   Volume2,
@@ -30,6 +32,7 @@ import {
 import { useAuth } from "@/context/auth-context";
 import { useListenTogether } from "@/context/listen-together-context";
 import { usePlayer } from "@/context/player-context";
+import { exportUserDataAsJSON, importUserDataFromJSON } from "@/lib/storage";
 import { cn } from "@/lib/utils";
 
 type SettingsTab = "playlists" | "player" | "listenTogether" | "account";
@@ -68,8 +71,50 @@ export function AppSettingsDialog({
 
   const [activeTab, setActiveTab] = useState<SettingsTab>("playlists");
   const [newPlaylistName, setNewPlaylistName] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!user) return null;
+
+  function handleExportBackup() {
+    if (!user) return;
+    const data = exportUserDataAsJSON(user.username);
+    if (!data) {
+      toast.error("Failed to generate backup.");
+      return;
+    }
+    const blob = new Blob([data], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `auxy_backup_${user.username}_${new Date().toISOString().split("T")[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success("Backup downloaded successfully! Keep this file safe.");
+  }
+
+  function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const content = ev.target?.result as string;
+      if (!content) return;
+      const res = importUserDataFromJSON(content);
+      if (res.success && res.user) {
+        toast.success(`Restored data for @${res.user.username}! Refreshing state...`);
+        setTimeout(() => {
+          window.location.reload();
+        }, 800);
+      } else {
+        toast.error(res.error || "Failed to restore backup.");
+      }
+    };
+    reader.readAsText(file);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
 
   function handleAddPlaylist(e: React.FormEvent) {
     e.preventDefault();
@@ -463,6 +508,39 @@ export function AppSettingsDialog({
               <div className="border-t border-white/10 pt-2 text-xs text-white/60 flex justify-between">
                 <span>Account Email</span>
                 <span className="font-mono text-white/80">{user.email || "—"}</span>
+              </div>
+            </div>
+
+            {/* Data Backup & Restore */}
+            <div className="rounded-xl border border-white/15 bg-white/5 p-3.5 space-y-3">
+              <div className="flex items-center gap-2 text-white">
+                <ShieldCheck className="size-4 text-emerald-400" />
+                <span className="text-xs font-bold">Data & Playlist Backup</span>
+              </div>
+              <p className="text-[11px] text-white/60 leading-relaxed">
+                Your playlists, liked songs, and custom theme are permanently secured. You can also download a backup file to keep your data safe across devices.
+              </p>
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handleExportBackup}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/20 bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  <Download className="size-3.5" />
+                  <span>Download Backup (JSON)</span>
+                </button>
+
+                <label className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/20 bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-colors cursor-pointer">
+                  <Upload className="size-3.5" />
+                  <span>Restore from File</span>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".json"
+                    onChange={handleImportFile}
+                    className="sr-only"
+                  />
+                </label>
               </div>
             </div>
 

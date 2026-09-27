@@ -20,7 +20,6 @@ import {
   createJoinRequestInSupabase,
   cancelJoinRequestInSupabase,
   respondToJoinRequestInSupabase,
-  getRoomDocId,
 } from "@/lib/supabase-db";
 import {
   broadcastLivePlaybackEvent,
@@ -71,8 +70,6 @@ interface ListenTogetherContextValue {
 }
 
 const ListenTogetherContext = createContext<ListenTogetherContextValue | null>(null);
-
-const LISTEN_TOGETHER_ACTIVE = false;
 
 export function ListenTogetherProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
